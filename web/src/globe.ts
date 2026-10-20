@@ -383,7 +383,7 @@ export async function showGlobe(root: HTMLElement) {
     globe.showAtmosphere(q !== 'low');
     globe.globeImageUrl(q === 'low' ? '/img/earth-dark.jpg' : '/img/earth-night.jpg');
     document.body.classList.toggle('q-low', q === 'low');
-    for (const a of arcs.values()) a.sig = ''; // stroke style depends on quality
+    document.body.dataset.quality = q;
   }
   applyQuality(quality);
 
@@ -522,7 +522,7 @@ export async function showGlobe(root: HTMLElement) {
       // The other direction must lead by 30% before an arc turns around, so it doesn't flicker.
       if (arc.toHome && a.up > a.down * 1.3) arc.toHome = false;
       else if (!arc.toHome && a.down > a.up * 1.3) arc.toHome = true;
-      const sig = `${level}|${color}|${arc.toHome ? 1 : 0}|${quality === 'low' ? 1 : 0}`;
+      const sig = `${level}|${color}|${arc.toHome ? 1 : 0}`;
       arc.info = info;
       if (arc.sig !== sig) {
         arc.sig = sig;
@@ -530,7 +530,8 @@ export async function showGlobe(root: HTMLElement) {
         if (arc.toHome) Object.assign(arc, { startLat: p.lat, startLng: p.lon, endLat: home.lat, endLng: home.lon });
         else Object.assign(arc, { startLat: home.lat, startLng: home.lon, endLat: p.lat, endLng: p.lon });
         arc.color = level === 0 ? [hexA(color, 0.1), hexA(color, 0.4)] : [hexA(color, 0.35), hexA(color, 1)];
-        arc.stroke = quality === 'low' ? null : level === 0 ? 0.15 : 0.15 + level * 0.25;
+        // Arcs keep their width on every quality level; low quality saves elsewhere (resolution, effects).
+        arc.stroke = level === 0 ? 0.15 : 0.15 + level * 0.25;
         arc.time = level === 0 ? 6000 : 4000 - level * 650;
         arc.gap = level === 0 ? 2 : 1 - level * 0.12;
       }
@@ -767,23 +768,42 @@ export async function showGlobe(root: HTMLElement) {
     }
   }
 
-  // Step quality down while the frame rate stays poor.
+  // Auto quality: step down while the frame rate stays poor, back up once it recovers.
+  // Time spent in the background (hidden tab, sleeping screen, stalls) is not counted: browsers
+  // throttle animation there, and judging quality by it once left the globe stuck on "low".
   if (meta.display.quality === 'auto') {
+    const order: Quality[] = ['low', 'medium', 'high'];
     let frames = 0;
-    let since = performance.now();
-    const tick = () => {
+    let busy = 0; // ms of real, foreground frame time in this window
+    let last = performance.now();
+    let goodWindows = 0;
+    const tick = (now: number) => {
       if (!alive) return;
-      frames++;
-      const now = performance.now();
-      if (now - since > 4000) {
-        const fps = (frames * 1000) / (now - since);
-        frames = 0;
-        since = now;
-        if (fps < 40 && quality !== 'low') applyQuality(quality === 'high' ? 'medium' : 'low');
+      const dt = now - last;
+      last = now;
+      if (!document.hidden && dt < 250) {
+        frames++;
+        busy += dt;
       }
-      if (quality !== 'low') requestAnimationFrame(tick);
+      if (busy > 4000) {
+        const fps = (frames * 1000) / busy;
+        frames = 0;
+        busy = 0;
+        const i = order.indexOf(quality);
+        if (fps < 30 && i > 0) {
+          goodWindows = 0;
+          applyQuality(order[i - 1]);
+        } else if (fps > 55 && i < order.length - 1 && ++goodWindows >= 3) {
+          goodWindows = 0;
+          applyQuality(order[i + 1]);
+        }
+      }
+      requestAnimationFrame(tick);
     };
-    setTimeout(() => requestAnimationFrame(tick), 3000);
+    setTimeout(() => {
+      last = performance.now();
+      requestAnimationFrame(tick);
+    }, 3000);
   }
 
   const tickClock = () => setText(clock, new Date().toLocaleTimeString(lang === 'zh' ? 'zh-CN' : 'en-GB', { hour12: false }));
