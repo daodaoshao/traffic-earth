@@ -14,7 +14,7 @@ const EMA = 0.45;
 const HISTORY_SEC = 90;
 const LEGEND_SLOTS = 8;
 const TOP_SLOTS = 12;
-const DEV_SLOTS = 14;
+const DEV_SLOTS = 8;
 const MAX_ARCS = 90;
 
 const hexA = (hex: string, a: number) => {
@@ -114,6 +114,7 @@ export async function showGlobe(root: HTMLElement) {
   const langBtn = h('button.icon-btn', { type: 'button', title: t('lang.label') }, lang === 'zh' ? 'EN' : '中');
   langBtn.onclick = () => setLang(lang === 'zh' ? 'en' : 'zh');
   const banner = h('div.banner.hidden');
+  const qualityTag = h('span');
 
   const vDown = h('span.v', null, '0');
   const vDownU = h('span.u', null, 'bps');
@@ -129,28 +130,40 @@ export async function showGlobe(root: HTMLElement) {
     for (const [k, v] of Object.entries(attrs)) el.setAttribute(k, String(v));
     return el;
   };
+  // Two rings: outer = live rate, inner = today's bytes.
   const donut = svg('svg', { viewBox: '0 0 120 120', class: 'donut' });
-  const R = 46;
-  const C = 2 * Math.PI * R;
-  donut.append(svg('circle', { cx: 60, cy: 60, r: R, fill: 'none', stroke: 'rgba(46,230,255,0.08)', 'stroke-width': 14 }));
-  const segs = Array.from({ length: LEGEND_SLOTS + 1 }, () => {
-    const c = svg('circle', { cx: 60, cy: 60, r: R, fill: 'none', 'stroke-width': 14, transform: 'rotate(-90 60 60)' });
-    c.style.strokeDasharray = `0 ${C}`;
-    c.style.strokeDashoffset = '0';
-    donut.append(c);
-    return c;
-  });
-  const donutVal = svg('text', { x: 60, y: 58, 'text-anchor': 'middle', fill: '#d8ecff', 'font-size': 13, 'font-family': 'ui-monospace, monospace' });
-  const donutSub = svg('text', { x: 60, y: 74, 'text-anchor': 'middle', fill: '#6f8aa8', 'font-size': 9 });
-  donut.append(donutVal, donutSub);
+  const ring = (r: number, w: number) => {
+    const c = 2 * Math.PI * r;
+    donut.append(svg('circle', { cx: 60, cy: 60, r, fill: 'none', stroke: 'rgba(46,230,255,0.08)', 'stroke-width': w }));
+    const segs = Array.from({ length: LEGEND_SLOTS + 1 }, () => {
+      const el = svg('circle', { cx: 60, cy: 60, r, fill: 'none', 'stroke-width': w, transform: 'rotate(-90 60 60)' });
+      el.style.strokeDasharray = `0 ${c}`;
+      el.style.strokeDashoffset = '0';
+      donut.append(el);
+      return el;
+    });
+    return { c, segs };
+  };
+  const ringNow = ring(52, 9);
+  const ringDay = ring(39, 9);
+  const donutNow = svg('text', { x: 60, y: 58, 'text-anchor': 'middle', fill: '#2ee6ff', 'font-size': 11, 'font-family': 'ui-monospace, monospace' });
+  const donutDay = svg('text', { x: 60, y: 72, 'text-anchor': 'middle', fill: '#9fb4cc', 'font-size': 9, 'font-family': 'ui-monospace, monospace' });
+  donut.append(donutNow, donutDay);
   const legendNote = h('div.legend-note.muted');
   const legendRows = Array.from({ length: LEGEND_SLOTS }, () => {
     const sw = h('i');
     const name = h('span');
-    const pct = h('em');
-    return { row: h('div.slot', null, sw, name, pct), sw, name, pct };
+    const now = h('em');
+    const day = h('em');
+    return { row: h('div.slot', null, sw, name, now, day), sw, name, now, day };
   });
-  const legend = h('div.legend', null, legendNote, legendRows.map((r) => r.row));
+  const legend = h(
+    'div.legend',
+    null,
+    h('div.legend-head', null, h('span'), h('em', null, t('hud.now')), h('em', null, t('hud.todayTab'))),
+    legendRows.map((r) => r.row),
+    legendNote,
+  );
 
   const mkRows = (n: number, clickable: boolean) =>
     Array.from({ length: n }, () => {
@@ -212,23 +225,7 @@ export async function showGlobe(root: HTMLElement) {
   const regionList = rankList(TOP_SLOTS);
   const devList = h('div.list', null, devRows.map((r) => r.row));
 
-  let catMode: 'now' | 'today' = 'now';
   let filter: string | null = null;
-
-  const tabs = (opts: [string, string][], get: () => string, set: (v: string) => void, reset: () => void) => {
-    const btns = opts.map(([v, label]) => {
-      const b = h('button', { type: 'button' }, label);
-      b.onclick = () => {
-        set(v);
-        btns.forEach((x, i) => x.classList.toggle('on', opts[i][0] === get()));
-        reset();
-        onFrame(true);
-      };
-      b.classList.toggle('on', v === get());
-      return b;
-    });
-    return h('span.tabs', null, btns);
-  };
 
   const hud = h(
     'div.hud',
@@ -266,12 +263,7 @@ export async function showGlobe(root: HTMLElement) {
     h(
       'section.panel.p-cats',
       null,
-      h(
-        'h3',
-        null,
-        t('hud.categories'),
-        tabs([['now', t('hud.now')], ['today', t('hud.todayTab')]], () => catMode, (v) => (catMode = v as any), () => {}),
-      ),
+      h('h3', null, t('hud.categories')),
       h('div.donut-wrap', null, donut, legend),
     ),
     ),
@@ -284,7 +276,7 @@ export async function showGlobe(root: HTMLElement) {
       h('h4.sub-head', null, t('hud.byRegion')),
       regionList.el,
     ),
-    h('div.footer', null, h('div.arc-hint', null, t('hud.arcHint')), t('hud.attribution')),
+    h('div.footer', null, h('div.arc-hint', null, t('hud.arcHint')), t('hud.attribution'), '  ·  ', qualityTag),
   );
   root.replaceChildren(stage, h('div.scanlines'), h('div.vignette'), hud, banner);
 
@@ -384,6 +376,7 @@ export async function showGlobe(root: HTMLElement) {
     globe.globeImageUrl(q === 'low' ? '/img/earth-dark.jpg' : '/img/earth-night.jpg');
     document.body.classList.toggle('q-low', q === 'low');
     document.body.dataset.quality = q;
+    setText(qualityTag, t('hud.quality', { q: t(`hud.q.${q}`) }) + (meta.display.quality === 'auto' ? t('hud.qualityAuto') : ''));
   }
   applyQuality(quality);
 
@@ -522,7 +515,7 @@ export async function showGlobe(root: HTMLElement) {
       // The other direction must lead by 30% before an arc turns around, so it doesn't flicker.
       if (arc.toHome && a.up > a.down * 1.3) arc.toHome = false;
       else if (!arc.toHome && a.down > a.up * 1.3) arc.toHome = true;
-      const sig = `${level}|${color}|${arc.toHome ? 1 : 0}`;
+      const sig = `${level}|${color}|${arc.toHome ? 1 : 0}|${quality}`;
       arc.info = info;
       if (arc.sig !== sig) {
         arc.sig = sig;
@@ -530,8 +523,10 @@ export async function showGlobe(root: HTMLElement) {
         if (arc.toHome) Object.assign(arc, { startLat: p.lat, startLng: p.lon, endLat: home.lat, endLng: home.lon });
         else Object.assign(arc, { startLat: home.lat, startLng: home.lon, endLat: p.lat, endLng: p.lon });
         arc.color = level === 0 ? [hexA(color, 0.1), hexA(color, 0.4)] : [hexA(color, 0.35), hexA(color, 1)];
-        // Arcs keep their width on every quality level; low quality saves elsewhere (resolution, effects).
-        arc.stroke = level === 0 ? 0.15 : 0.15 + level * 0.25;
+        // Lower quality renders at a lower pixel ratio, where thin tubes shrink to a pixel or two;
+        // widen them to compensate so arcs look the same on every level.
+        const widen = quality === 'high' ? 1 : quality === 'medium' ? 1.3 : 1.6;
+        arc.stroke = (level === 0 ? 0.25 : 0.3 + level * 0.3) * widen;
         arc.time = level === 0 ? 6000 : 4000 - level * 650;
         arc.gap = level === 0 ? 2 : 1 - level * 0.12;
       }
@@ -595,31 +590,43 @@ export async function showGlobe(root: HTMLElement) {
     if (!frame) return;
     const f = frame;
 
-    // Categories: fixed slots, fixed height.
-    const nowMode = catMode === 'now' || !!filter;
-    const catScore = nowMode ? sCat.v : new Map(Object.entries(f.today.cats).map(([k, v]) => [k, v[0] + v[1]] as [string, number]));
-    const order = oCat.pick(catScore, LEGEND_SLOTS, force);
-    const total = [...catScore.values()].reduce((s, v) => s + v, 0);
-    const shownSum = order.reduce((s, k) => s + (catScore.get(k) ?? 0), 0);
-    let acc = 0;
-    segs.forEach((seg, i) => {
-      const k = order[i];
-      const v = i < LEGEND_SLOTS ? (k ? (catScore.get(k) ?? 0) : 0) : Math.max(0, total - shownSum);
-      const len = total > 0 ? (v / total) * C : 0;
-      seg.style.stroke = i < LEGEND_SLOTS ? (k ? catColor(k) : 'transparent') : '#3a4a5c';
-      seg.style.strokeDasharray = `${Math.max(0, len - 1.2)} ${C}`;
-      seg.style.strokeDashoffset = String(-acc);
-      acc += len;
-    });
-    setText(donutVal, total > 0 ? (nowMode ? rate(total) : bytes(total)) : '—');
-    setText(donutSub, nowMode ? t('hud.current') : t('hud.todayShort'));
-    setText(legendNote, filter && catMode === 'today' ? t('hud.filterNowOnly') : '');
+    // Categories: live (outer ring) and today (inner ring) side by side, fixed slots.
+    // Today's split is only known for the whole home, so it is blank while a device is selected.
+    const live = sCat.v;
+    const day = new Map<string, number>(filter ? [] : Object.entries(f.today.cats).map(([k, v]) => [k, v[0] + v[1]] as [string, number]));
+    const liveTotal = [...live.values()].reduce((a, v) => a + v, 0);
+    const dayTotal = [...day.values()].reduce((a, v) => a + v, 0);
+    // Order by combined share so both columns stay readable; re-sorted only every few seconds.
+    const share = new Map<string, number>();
+    for (const [k, v] of live) share.set(k, (share.get(k) ?? 0) + (liveTotal ? v / liveTotal : 0));
+    for (const [k, v] of day) share.set(k, (share.get(k) ?? 0) + (dayTotal ? v / dayTotal : 0));
+    const order = oCat.pick(share, LEGEND_SLOTS, force);
+    const paint = (rg: { c: number; segs: SVGCircleElement[] }, vals: Map<string, number>, total: number) => {
+      const shownSum = order.reduce((a, k) => a + (vals.get(k) ?? 0), 0);
+      let acc = 0;
+      rg.segs.forEach((seg, i) => {
+        const k = order[i];
+        const v = i < LEGEND_SLOTS ? (k ? (vals.get(k) ?? 0) : 0) : Math.max(0, total - shownSum);
+        const len = total > 0 ? (v / total) * rg.c : 0;
+        seg.style.stroke = i < LEGEND_SLOTS ? (k ? catColor(k) : 'transparent') : '#3a4a5c';
+        seg.style.strokeDasharray = `${Math.max(0, len - 1.2)} ${rg.c}`;
+        seg.style.strokeDashoffset = String(-acc);
+        acc += len;
+      });
+    };
+    paint(ringNow, live, liveTotal);
+    paint(ringDay, day, dayTotal);
+    setText(donutNow, liveTotal > 0 ? rate(liveTotal) : '—');
+    setText(donutDay, dayTotal > 0 ? bytes(dayTotal) : '—');
+    setText(legendNote, filter ? t('hud.filterNowOnly') : '');
+    const pct = (v: number, total: number) => (total > 0 ? `${Math.round((v / total) * 100)}%` : '—');
     legendRows.forEach((r, i) => {
       const k = order[i];
       r.row.classList.toggle('empty', !k);
       r.sw.style.background = k ? catColor(k) : 'transparent';
       setText(r.name, k ? catName(k) : '');
-      setText(r.pct, k && total > 0 ? `${Math.round(((catScore.get(k) ?? 0) / total) * 100)}%` : '');
+      setText(r.now, k ? pct(live.get(k) ?? 0, liveTotal) : '');
+      setText(r.day, k ? pct(day.get(k) ?? 0, dayTotal) : '');
     });
 
     // Top destinations, by host and by region.
