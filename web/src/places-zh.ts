@@ -83,8 +83,109 @@ const cities: Record<string, string> = {
   Johannesburg: '约翰内斯堡', 'Cape Town': '开普敦', Cairo: '开罗', Lagos: '拉各斯', Nairobi: '内罗毕',
 };
 
+
+/** More first-level divisions, so places fall back to "country · province" rather than country alone. */
+const moreRegions: Record<string, string> = {
+  // United States
+  Alabama: '亚拉巴马', Arkansas: '阿肯色', Connecticut: '康涅狄格', Delaware: '特拉华', Idaho: '爱达荷', Kentucky: '肯塔基',
+  Louisiana: '路易斯安那', Maine: '缅因', Mississippi: '密西西比', Montana: '蒙大拿', Nebraska: '内布拉斯加',
+  'New Hampshire': '新罕布什尔', 'New Mexico': '新墨西哥', 'North Dakota': '北达科他', 'Rhode Island': '罗得岛',
+  'South Dakota': '南达科他', Vermont: '佛蒙特', 'West Virginia': '西弗吉尼亚', Wyoming: '怀俄明',
+  // Canada, Australia, New Zealand
+  Manitoba: '马尼托巴', Saskatchewan: '萨斯喀彻温', 'Nova Scotia': '新斯科舍', 'New Brunswick': '新不伦瑞克',
+  'Newfoundland and Labrador': '纽芬兰与拉布拉多', 'South Australia': '南澳', 'Western Australia': '西澳',
+  Tasmania: '塔斯马尼亚', 'Australian Capital Territory': '澳大利亚首都领地', 'Northern Territory': '北领地',
+  Auckland: '奥克兰', Wellington: '惠灵顿', Canterbury: '坎特伯雷',
+  // Japan
+  Aomori: '青森', Iwate: '岩手', Miyagi: '宫城', Akita: '秋田', Yamagata: '山形', Fukushima: '福岛', Ibaraki: '茨城',
+  Tochigi: '栃木', Gunma: '群马', Niigata: '新潟', Toyama: '富山', Ishikawa: '石川', Fukui: '福井', Yamanashi: '山梨',
+  Nagano: '长野', Gifu: '岐阜', Shizuoka: '静冈', Mie: '三重', Shiga: '滋贺', Nara: '奈良', Wakayama: '和歌山',
+  Tottori: '鸟取', Shimane: '岛根', Okayama: '冈山', Hiroshima: '广岛', Yamaguchi: '山口', Tokushima: '德岛',
+  Kagawa: '香川', Ehime: '爱媛', Kochi: '高知', Saga: '佐贺', Nagasaki: '长崎', Kumamoto: '熊本', Oita: '大分',
+  Miyazaki: '宫崎', Kagoshima: '鹿儿岛', Okinawa: '冲绳',
+  // Korea
+  'Gyeongsangnam-do': '庆尚南道', 'Gyeongsangbuk-do': '庆尚北道', 'Jeollanam-do': '全罗南道', 'Jeollabuk-do': '全罗北道',
+  'Chungcheongnam-do': '忠清南道', 'Chungcheongbuk-do': '忠清北道', 'Gangwon-do': '江原道', 'Jeju-do': '济州道',
+  Busan: '釜山', Daegu: '大邱', Incheon: '仁川', Gwangju: '光州', Daejeon: '大田', Ulsan: '蔚山', Sejong: '世宗',
+  // Southeast and South Asia
+  'North Sumatra': '北苏门答腊', 'West Java': '西爪哇', 'Central Java': '中爪哇', 'East Java': '东爪哇', Jakarta: '雅加达',
+  Bali: '巴厘', 'Metro Manila': '马尼拉大都会', Bangkok: '曼谷', Hanoi: '河内', 'Ho Chi Minh': '胡志明市',
+  'Kuala Lumpur': '吉隆坡', Selangor: '雪兰莪', Johor: '柔佛', Penang: '槟城', 'Tamil Nadu': '泰米尔纳德',
+  Telangana: '特伦甘纳', Gujarat: '古吉拉特', 'Uttar Pradesh': '北方邦', 'West Bengal': '西孟加拉', Kerala: '喀拉拉',
+  Punjab: '旁遮普', Sindh: '信德',
+  // Europe
+  'North Brabant': '北布拉班特', 'South Holland': '南荷兰', Utrecht: '乌得勒支', Flevoland: '弗莱福兰', Gelderland: '海尔德兰',
+  Brandenburg: '勃兰登堡', Saxony: '萨克森', 'Lower Saxony': '下萨克森', 'Baden-Württemberg': '巴登-符腾堡',
+  'Rhineland-Palatinate': '莱茵兰-普法尔茨', 'Schleswig-Holstein': '石勒苏益格-荷尔斯泰因', Thuringia: '图林根',
+  'Saxony-Anhalt': '萨克森-安哈尔特', 'Mecklenburg-Vorpommern': '梅克伦堡-前波莫瑞', Saarland: '萨尔', Bremen: '不来梅',
+  Hamburg: '汉堡', 'Hauts-de-France': '上法兰西', 'Centre-Val de Loire': '中央-卢瓦尔河谷', 'Grand Est': '大东部',
+  Normandy: '诺曼底', Brittany: '布列塔尼', 'Pays de la Loire': '卢瓦尔河地区', 'Nouvelle-Aquitaine': '新阿基坦',
+  Occitanie: '奥克西塔尼', 'Auvergne-Rhône-Alpes': '奥弗涅-罗讷-阿尔卑斯', "Provence-Alpes-Côte d'Azur": '普罗旺斯-阿尔卑斯-蓝色海岸',
+  'Bourgogne-Franche-Comté': '勃艮第-弗朗什-孔泰', Wales: '威尔士', 'Northern Ireland': '北爱尔兰',
+  Lombardy: '伦巴第', Piedmont: '皮埃蒙特', Lazio: '拉齐奥', Veneto: '威尼托', Tuscany: '托斯卡纳', Campania: '坎帕尼亚',
+  'Emilia-Romagna': '艾米利亚-罗马涅', Sicily: '西西里', Madrid: '马德里', Catalonia: '加泰罗尼亚', Andalusia: '安达卢西亚',
+  Valencia: '巴伦西亚', 'Castille and León': '卡斯蒂利亚-莱昂', 'Basque Country': '巴斯克', Galicia: '加利西亚',
+  Lisbon: '里斯本', Porto: '波尔图', Mazovia: '马佐夫舍', 'Lower Silesia': '下西里西亚', 'Lesser Poland': '小波兰',
+  'Greater Poland': '大波兰', Silesia: '西里西亚', Pomerania: '波美拉尼亚', 'Pest County': '佩斯州', Budapest: '布达佩斯',
+  Baranya: '巴兰尼亚', 'Bekes County': '贝凯什州', 'Bihor County': '比霍尔县', Bucharest: '布加勒斯特', Cluj: '克卢日',
+  'Trenčín Region': '特伦钦州', 'Bratislava Region': '布拉迪斯拉发州', Prague: '布拉格', 'South Moravian': '南摩拉维亚',
+  Vienna: '维也纳', Attica: '阿提卡', 'Central Macedonia': '中马其顿', 'Kyiv City': '基辅', Kyiv: '基辅',
+  'Saint Petersburg': '圣彼得堡', 'Nizhny Novgorod Oblast': '下诺夫哥罗德州', 'Perm Krai': '彼尔姆边疆区',
+  'Belgorod Oblast': '别尔哥罗德州', 'Sverdlovsk Oblast': '斯维尔德洛夫斯克州', 'Novosibirsk Oblast': '新西伯利亚州',
+  Tatarstan: '鞑靼斯坦', 'Krasnodar Krai': '克拉斯诺达尔边疆区', 'Primorsky Krai': '滨海边疆区', 'Leningrad Oblast': '列宁格勒州',
+  Istanbul: '伊斯坦布尔', Ankara: '安卡拉', Izmir: '伊兹密尔', Baki: '巴库', Tbilisi: '第比利斯', Yerevan: '埃里温',
+  Oslo: '奥斯陆', 'Capital Region': '首都大区', 'Västra Götaland': '西约塔兰', 'Canton of Zurich': '苏黎世州',
+  Geneva: '日内瓦', 'Brussels Capital': '布鲁塞尔首都大区', Flanders: '佛兰德', Wallonia: '瓦隆',
+  // Middle East and Africa
+  'Central District': '中央区', 'Tel Aviv': '特拉维夫', Jerusalem: '耶路撒冷', 'Abu Dhabi': '阿布扎比',
+  'Riyadh Region': '利雅得省', 'Makkah Region': '麦加省', Qalyubia: '盖勒尤卜', Cairo: '开罗', Giza: '吉萨',
+  'Beni Mellal-Khenifra': '贝尼迈拉勒-海尼夫拉', 'Casablanca-Settat': '卡萨布兰卡-塞塔特', Lagos: '拉各斯',
+  Gauteng: '豪登', 'Western Cape': '西开普', 'Nairobi County': '内罗毕',
+  // Latin America
+  Paraná: '巴拉那', 'Rio Grande do Sul': '南里奥格兰德', 'Rio de Janeiro': '里约热内卢', 'Minas Gerais': '米纳斯吉拉斯',
+  'Santa Catarina': '圣卡塔琳娜', Bahia: '巴伊亚', Ceará: '塞阿拉', Guanajuato: '瓜纳华托', Jalisco: '哈利斯科',
+  'Nuevo León': '新莱昂', 'Mexico City': '墨西哥城', Pichincha: '皮钦查', 'Buenos Aires': '布宜诺斯艾利斯',
+  'Santiago Metropolitan': '圣地亚哥首都大区', Lima: '利马', 'Bogota D.C.': '波哥大',
+};
+Object.assign(regions, moreRegions);
+
 /** "Shibuya City", "Hangzhou (Xihu Qu)" -> "Shibuya", "Hangzhou" */
 const clean = (s: string) => s.replace(/\s*\(.*?\)\s*/g, '').replace(/\s+(City|Shi|Qu|District)$/i, '').trim();
 
 export const zhCity = (en: string) => cities[en] ?? cities[clean(en)];
 export const zhRegion = (en: string) => regions[en] ?? regions[clean(en)];
+
+/** Common network operators. Unknown ones are left out in Chinese rather than shown in English. */
+const orgs: Array<[RegExp, string]> = [
+  [/chinanet|china telecom|chinatelecom|ctgnet/i, '中国电信'],
+  [/china unicom|unicom|cnc group|china169|cuii/i, '中国联通'],
+  [/china mobile|cmnet|cmi /i, '中国移动'],
+  [/cernet|china education/i, '中国教育网'],
+  [/china internet network info/i, '中国互联网络信息中心'],
+  [/alibaba|aliyun|taobao/i, '阿里云'],
+  [/tencent/i, '腾讯云'],
+  [/baidu/i, '百度'],
+  [/huawei/i, '华为云'],
+  [/bytedance|byteplus|volcano/i, '字节跳动'],
+  [/kingsoft|ksyun/i, '金山云'],
+  [/wangsu|chinanetcenter/i, '网宿科技'],
+  [/amazon|aws/i, '亚马逊云'],
+  [/google/i, '谷歌'],
+  [/microsoft|azure/i, '微软'],
+  [/apple/i, '苹果'],
+  [/oracle/i, '甲骨文云'],
+  [/hong kong telecom|hkt|pccw/i, '香港电讯'],
+  [/chunghwa/i, '中华电信'],
+  [/korea telecom|\bkt\b/i, '韩国电信'],
+  [/ntt/i, '日本电报电话'],
+  [/softbank/i, '软银'],
+  [/rostelecom/i, '俄罗斯电信'],
+  [/deutsche telekom/i, '德国电信'],
+  [/orange/i, '法国电信'],
+  [/vodafone/i, '沃达丰'],
+  [/at&t/i, '美国电话电报'],
+  [/verizon/i, '威瑞森'],
+  [/comcast/i, '康卡斯特'],
+];
+
+export const zhOrg = (org: string) => orgs.find(([re]) => re.test(org))?.[1];

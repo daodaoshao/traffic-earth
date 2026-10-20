@@ -2,6 +2,7 @@ import Globe, { type GlobeInstance } from 'globe.gl';
 import { api, type Category, type Frame, type Meta, type Point } from './api';
 import { cities } from './cities';
 import { catName, lang, msgText, placeName, setLang, t } from './i18n';
+import { zhOrg } from './places-zh';
 import { bytes, flag, fmtRate, h, rate } from './ui';
 
 type Quality = 'high' | 'medium' | 'low';
@@ -353,7 +354,7 @@ export async function showGlobe(root: HTMLElement) {
   const hist: { t: number; up: number; down: number }[] = [];
   const shown = { up: 0, down: 0 };
   const target = { up: 0, down: 0 };
-  type TopMeta = { name: string; sub: string; cc: string; color: string; up: number; down: number };
+  type TopMeta = { name: string; sub: string; org: string; cc: string; color: string; up: number; down: number };
   const topMeta = new Map<string, TopMeta>();
 
   const devName = (k: string) => {
@@ -395,8 +396,18 @@ export async function showGlobe(root: HTMLElement) {
       if (!e) {
         e =
           topMode === 'host'
-            ? { name: r.h, sub: r.i ? t('hud.inbound') : r.o || (pt ? placeName(pt) : ''), cc: pt?.cc ?? '', color: catColor(r.i ? 'inbound' : r.c), up: 0, down: 0 }
-            : { name: placeName(pt), sub: '', cc: pt?.cc ?? '', color: '#2ee6ff', up: 0, down: 0 };
+            ? {
+                name: r.h,
+                // The subtitle is always a place in the viewer's language; operator names are
+                // data in English, so they only appear in the tooltip (translated or omitted in Chinese).
+                sub: r.i ? `${t('hud.inbound')} · ${placeName(pt, true)}` : placeName(pt),
+                org: r.o ? (lang === 'zh' ? (zhOrg(r.o) ?? '') : r.o) : '',
+                cc: pt?.cc ?? '',
+                color: catColor(r.i ? 'inbound' : r.c),
+                up: 0,
+                down: 0,
+              }
+            : { name: placeName(pt), sub: '', org: '', cc: pt?.cc ?? '', color: '#2ee6ff', up: 0, down: 0 };
         tops.set(key, e);
       }
       e.up += r.u;
@@ -580,7 +591,7 @@ export async function showGlobe(root: HTMLElement) {
       setText(r.sub, m.sub);
       setText(r.val, rate(v));
       r.bar.style.width = `${(v / tMax) * 100}%`;
-      r.row.title = `↓ ${rate(m.down)}  ↑ ${rate(m.up)}`;
+      r.row.title = [m.org, `↓ ${rate(m.down)}  ↑ ${rate(m.up)}`].filter(Boolean).join('\n');
     });
     topEmpty.classList.toggle('hidden', tOrder.length > 0);
 
