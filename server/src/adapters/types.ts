@@ -1,4 +1,5 @@
 import type { EventEmitter } from 'node:events';
+import type { Msg } from '../msg.js';
 
 /** A connection as every adapter reports it. Byte counters are cumulative. */
 export interface FlowConn {
@@ -38,7 +39,7 @@ export interface HostEntry {
 export type SourceStatus =
   | { state: 'connecting' }
   | { state: 'ok'; since: number; detail?: string }
-  | { state: 'error'; error: string; retryAt: number }
+  | { state: 'error'; error: Msg; retryAt: number }
   | { state: 'disabled' };
 
 /**

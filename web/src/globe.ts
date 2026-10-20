@@ -1,11 +1,68 @@
 import Globe, { type GlobeInstance } from 'globe.gl';
-import { api, type Category, type Frame, type Meta, type Row } from './api';
-import { bytes, flag, fmtRate, h, mount, rate } from './ui';
+import { api, type Category, type Frame, type Meta, type Point } from './api';
+import { cities } from './cities';
+import { catName, lang, msgText, placeName, setLang, t } from './i18n';
+import { bytes, flag, fmtRate, h, rate } from './ui';
 
 type Quality = 'high' | 'medium' | 'low';
 
+/** Lists re-sort at most this often; in between only numbers and bars move. */
+const RESORT_MS = 3000;
+/** Smoothing for displayed rates (per 1 s frame). */
+const EMA = 0.45;
+const HISTORY_SEC = 90;
+const LEGEND_SLOTS = 8;
+const TOP_SLOTS = 14;
+const DEV_SLOTS = 14;
+const MAX_ARCS = 90;
+
+const hexA = (hex: string, a: number) => {
+  const n = parseInt(hex.slice(1), 16);
+  return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`;
+};
+const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]!);
+const setText = (el: HTMLElement | SVGElement, v: string) => {
+  if (el.textContent !== v) el.textContent = v;
+};
+
+/** Exponentially smoothed values per key; keys fade out instead of vanishing. */
+class Smooth {
+  v = new Map<string, number>();
+  update(next: Map<string, number>) {
+    for (const [k, x] of next) this.v.set(k, (this.v.get(k) ?? x) * (1 - EMA) + x * EMA);
+    for (const [k, x] of this.v)
+      if (!next.has(k)) {
+        const y = x * (1 - EMA);
+        if (y < 1) this.v.delete(k);
+        else this.v.set(k, y);
+      }
+  }
+  get(k: string) {
+    return this.v.get(k) ?? 0;
+  }
+}
+
+/** Keeps an order for a while so rows don't jump every second. */
+class StableOrder {
+  order: string[] = [];
+  private at = 0;
+  pick(score: Map<string, number>, n: number, force = false): string[] {
+    const now = performance.now();
+    const stale = this.order.some((k) => !score.has(k));
+    const room = this.order.length < n && score.size > this.order.length;
+    if (force || stale || room || now - this.at > RESORT_MS) {
+      this.order = [...score.entries()]
+        .filter(([, v]) => v > 0)
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, n)
+        .map(([k]) => k);
+      this.at = now;
+    }
+    return this.order;
+  }
+}
+
 interface ArcObj {
-  key: string;
   startLat: number;
   startLng: number;
   endLat: number;
@@ -15,15 +72,16 @@ interface ArcObj {
   time: number;
   gap: number;
   info: string;
+  sig: string;
 }
 
 interface PointObj {
-  key: string;
   lat: number;
   lng: number;
   alt: number;
   color: string;
   info: string;
+  sig: string;
 }
 
 interface Agg {
@@ -35,59 +93,94 @@ interface Agg {
   inbound: number;
 }
 
-const HISTORY = 90;
-
-const hexA = (hex: string, a: number) => {
-  const n = parseInt(hex.slice(1), 16);
-  return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`;
-};
-const top = <K>(m: Map<K, number>) => [...m.entries()].sort((a, b) => b[1] - a[1])[0]?.[0];
-const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]!);
-
 export async function showGlobe(root: HTMLElement) {
   const meta = await api<Meta>('/api/meta');
   const cats = new Map<string, Category>(meta.categories.map((c) => [c.id, c]));
   const catColor = (id: string) => cats.get(id)?.color ?? '#6c7a89';
-  const catName = (id: string) => cats.get(id)?.name ?? id;
-  const home = meta.home ?? { lat: 39.9, lon: 116.4, name: '家' };
+  const home = meta.home ?? { lat: 39.9, lon: 116.4, name: '' };
+  // A home name picked from the city list is shown in the viewer's language.
+  const preset = cities.find((c) => c[0] === home.name || c[1] === home.name);
+  const homeName = preset ? (lang === 'zh' ? preset[0] : preset[1]) : home.name || t('hud.home');
 
-  // ---------- layout ----------
+  // ---------- static layout (built once; later only text, widths and attributes change) ----------
   const stage = h('div.stage');
   const clock = h('span.chip.mono');
-  const srcChips = h('span', { style: { display: 'flex', gap: '6px', flexWrap: 'wrap' } });
-  const filterChip = h('span.chip.filter.hidden', { title: '点击取消筛选' });
+  const srcChips = h('span.src-chips');
+  const filterChip = h('span.chip.filter.hidden', { title: t('hud.clearFilter') });
   const todayChip = h('span.chip.mono');
+  const langBtn = h('button.icon-btn', { type: 'button', title: t('lang.label') }, lang === 'zh' ? 'EN' : '中');
+  langBtn.onclick = () => setLang(lang === 'zh' ? 'en' : 'zh');
   const banner = h('div.banner.hidden');
 
-  const vDown = h('span.v');
-  const vDownU = h('span.u');
-  const vUp = h('span.v');
-  const vUpU = h('span.u');
+  const vDown = h('span.v', null, '0');
+  const vDownU = h('span.u', null, 'bps');
+  const vUp = h('span.v', null, '0');
+  const vUpU = h('span.u', null, 'bps');
   const spark = h('canvas.spark');
-  const kvConns = h('b.mono');
-  const kvToday = h('b.mono');
+  const kvConns = h('b.mono', null, '0');
+  const kvToday = h('b.mono', null, '—');
 
-  const donut = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-  donut.setAttribute('viewBox', '0 0 120 120');
-  donut.classList.add('donut');
-  const legend = h('div.legend.scroll');
-  const topList = h('div.list.scroll', { style: { flex: '1' } });
-  const devList = h('div.list.scroll', { style: { flex: '1' } });
-  const exits = h('div.exits');
+  const ns = 'http://www.w3.org/2000/svg';
+  const svg = <K extends keyof SVGElementTagNameMap>(tag: K, attrs: Record<string, string | number>) => {
+    const el = document.createElementNS(ns, tag);
+    for (const [k, v] of Object.entries(attrs)) el.setAttribute(k, String(v));
+    return el;
+  };
+  const donut = svg('svg', { viewBox: '0 0 120 120', class: 'donut' });
+  const R = 46;
+  const C = 2 * Math.PI * R;
+  donut.append(svg('circle', { cx: 60, cy: 60, r: R, fill: 'none', stroke: 'rgba(46,230,255,0.08)', 'stroke-width': 14 }));
+  const segs = Array.from({ length: LEGEND_SLOTS + 1 }, () => {
+    const c = svg('circle', { cx: 60, cy: 60, r: R, fill: 'none', 'stroke-width': 14, transform: 'rotate(-90 60 60)' });
+    c.style.strokeDasharray = `0 ${C}`;
+    c.style.strokeDashoffset = '0';
+    donut.append(c);
+    return c;
+  });
+  const donutVal = svg('text', { x: 60, y: 58, 'text-anchor': 'middle', fill: '#d8ecff', 'font-size': 13, 'font-family': 'ui-monospace, monospace' });
+  const donutSub = svg('text', { x: 60, y: 74, 'text-anchor': 'middle', fill: '#6f8aa8', 'font-size': 9 });
+  donut.append(donutVal, donutSub);
+  const legendNote = h('div.legend-note.muted');
+  const legendRows = Array.from({ length: LEGEND_SLOTS }, () => {
+    const sw = h('i');
+    const name = h('span');
+    const pct = h('em');
+    return { row: h('div.slot', null, sw, name, pct), sw, name, pct };
+  });
+  const legend = h('div.legend', null, legendNote, legendRows.map((r) => r.row));
+
+  const mkRows = (n: number, clickable: boolean) =>
+    Array.from({ length: n }, () => {
+      const name = h('span.n');
+      const sub = h('small');
+      const val = h('div.rate');
+      const bar = h('i');
+      const row = h('div.item.slot', { class: clickable ? 'click' : '' }, h('div.name', null, name, sub), val, h('div.bar', null, bar));
+      return { row, name, sub, val, bar, key: '' };
+    });
+  const topRows = mkRows(TOP_SLOTS, false);
+  const devRows = mkRows(DEV_SLOTS, true);
+  const topEmpty = h('div.empty', null, t('hud.noTraffic'));
+  const topList = h('div.list', null, topRows.map((r) => r.row), topEmpty);
+  const devList = h('div.list', null, devRows.map((r) => r.row));
 
   let catMode: 'now' | 'today' = 'now';
   let topMode: 'host' | 'region' = 'host';
   let filter: string | null = null;
 
-  const tabs = (opts: [string, string][], get: () => string, set: (v: string) => void) => {
-    const wrap = h('span.tabs');
-    const draw = () =>
-      mount(
-        wrap,
-        opts.map(([v, label]) => h('button', { class: get() === v ? 'on' : '', onclick: () => (set(v), draw(), render()) }, label)),
-      );
-    draw();
-    return wrap;
+  const tabs = (opts: [string, string][], get: () => string, set: (v: string) => void, reset: () => void) => {
+    const btns = opts.map(([v, label]) => {
+      const b = h('button', { type: 'button' }, label);
+      b.onclick = () => {
+        set(v);
+        btns.forEach((x, i) => x.classList.toggle('on', opts[i][0] === get()));
+        reset();
+        onFrame(true);
+      };
+      b.classList.toggle('on', v === get());
+      return b;
+    });
+    return h('span.tabs', null, btns);
   };
 
   const hud = h(
@@ -96,50 +189,62 @@ export async function showGlobe(root: HTMLElement) {
     h(
       'div.topbar',
       null,
-      h('div.brand', null, h('b', null, '流量地球'), h('span', null, 'TRAFFIC EARTH')),
+      h('div.brand', null, h('b', null, t('app.name')), h('span', null, t('app.sub'))),
       clock,
       srcChips,
       filterChip,
       h('span.spacer'),
       todayChip,
-      h('a.icon-btn', { href: '#/settings/sources', title: '设置' }, '⚙ 设置'),
+      langBtn,
+      h('a.icon-btn', { href: '#/settings/sources' }, `⚙ ${t('hud.settings')}`),
     ),
     h(
       'section.panel.p-rate',
       null,
-      h('h3', null, '实时吞吐'),
+      h('h3', null, t('hud.throughput')),
       h(
         'div.big',
         null,
-        h('div.down', null, h('div.lbl', null, '↓ 流入'), h('div', null, vDown, vDownU)),
-        h('div.up', null, h('div.lbl', null, '↑ 流出'), h('div', null, vUp, vUpU)),
+        h('div.down', null, h('div.lbl', null, t('hud.in')), h('div', null, vDown, vDownU)),
+        h('div.up', null, h('div.lbl', null, t('hud.out')), h('div', null, vUp, vUpU)),
       ),
       spark,
-      h('div.kv', null, h('span', null, '活动连接'), kvConns),
-      h('div.kv', null, h('span', null, '今日 ↓/↑'), kvToday),
+      h('div.kv', null, h('span', null, t('hud.conns')), kvConns),
+      h('div.kv', null, h('span', null, t('hud.todayInOut')), kvToday),
     ),
     h(
       'section.panel.p-cats',
       null,
-      h('h3', null, '流量分类', tabs([['now', '实时'], ['today', '今日']], () => catMode, (v) => (catMode = v as any))),
+      h(
+        'h3',
+        null,
+        t('hud.categories'),
+        tabs([['now', t('hud.now')], ['today', t('hud.todayTab')]], () => catMode, (v) => (catMode = v as any), () => {}),
+      ),
       h('div.donut-wrap', null, donut, legend),
     ),
     h(
       'section.panel.p-top',
       null,
-      h('h3', null, '流向排行', tabs([['host', '目标'], ['region', '地区']], () => topMode, (v) => (topMode = v as any))),
+      h(
+        'h3',
+        null,
+        t('hud.top'),
+        tabs([['host', t('hud.byTarget')], ['region', t('hud.byRegion')]], () => topMode, (v) => (topMode = v as any), () => {
+          sTop.v.clear();
+          topMeta.clear();
+          topRows.forEach((r) => (r.key = ''));
+        }),
+      ),
       topList,
     ),
-    h('section.panel.p-dev', null, h('h3', null, '设备'), devList),
-    h('section.panel.p-exit', null, h('h3', null, '出口'), exits),
-    h('div.footer', null, meta.geo.attribution),
+    h('section.panel.p-dev', null, h('h3', null, t('hud.devices')), devList),
+    h('div.footer', null, t('hud.attribution')),
   );
-  mount(root, stage, h('div.scanlines'), h('div.vignette'), hud, banner);
+  root.replaceChildren(stage, h('div.scanlines'), h('div.vignette'), hud, banner);
 
-  filterChip.onclick = () => {
-    filter = null;
-    render();
-  };
+  filterChip.onclick = () => setFilter(null);
+  devRows.forEach((r) => (r.row.onclick = () => r.key && setFilter(filter === r.key ? null : r.key)));
 
   // ---------- globe ----------
   let quality: Quality = meta.display.quality === 'auto' ? 'high' : meta.display.quality;
@@ -161,13 +266,13 @@ export async function showGlobe(root: HTMLElement) {
     .arcDashInitialGap(() => Math.random())
     .arcDashAnimateTime('time')
     .arcAltitudeAutoScale(0.45)
-    .arcLabel('info')
-    .pointsTransitionDuration(400)
+    .arcLabel((d: any) => d.info)
+    .pointsTransitionDuration(600)
     .pointAltitude('alt')
     .pointColor('color')
     .pointRadius(0.32)
-    .pointLabel('info')
-    .ringColor((d: any) => (t: number) => hexA(d.color, 1 - t))
+    .pointLabel((d: any) => d.info)
+    .ringColor((d: any) => (tt: number) => hexA(d.color, 1 - tt))
     .ringMaxRadius('max')
     .ringPropagationSpeed('speed')
     .ringRepeatPeriod('period');
@@ -182,11 +287,10 @@ export async function showGlobe(root: HTMLElement) {
     .then((g) => globe.hexPolygonsData(g.features));
 
   const controls = globe.controls() as any;
-  controls.autoRotate = true;
+  controls.autoRotate = meta.display.rotateSpeed > 0;
   controls.autoRotateSpeed = meta.display.rotateSpeed;
   controls.minDistance = 130;
   controls.maxDistance = 700;
-  controls.enableDamping = true;
   let resume: number | undefined;
   controls.addEventListener('start', () => {
     controls.autoRotate = false;
@@ -200,9 +304,32 @@ export async function showGlobe(root: HTMLElement) {
   const resize = () => {
     const r = stage.getBoundingClientRect();
     globe.width(r.width).height(r.height);
+    const dpr = window.devicePixelRatio || 1;
+    spark.width = Math.round(spark.clientWidth * dpr);
+    spark.height = Math.round(spark.clientHeight * dpr);
   };
   window.addEventListener('resize', resize);
   resize();
+
+  // Home beacon and HTML labels (positioned by hand; three-globe's html layer is avoided).
+  const homeRing = { lat: home.lat, lng: home.lon, color: '#2ee6ff', max: 6, speed: 2.2, period: 1100 };
+  const labelLayer = h('div.label-layer');
+  stage.append(labelLayer);
+  type Label = { lat: number; lng: number; alt: number; el: HTMLElement; w: number; text: string };
+  const homeLabel: Label = { lat: home.lat, lng: home.lon, alt: 0.02, el: h('div.globe-label.home'), w: 0, text: '' };
+  labelLayer.append(homeLabel.el);
+  const labels = new Map<string, Label>();
+  const setLabel = (l: Label, text: string) => {
+    if (l.text === text) return;
+    l.text = text;
+    l.el.textContent = text;
+    l.w = 0; // measured lazily
+  };
+  setLabel(homeLabel, `◉ ${homeName}`);
+
+  const arcs = new Map<string, ArcObj>();
+  const pts = new Map<string, PointObj>();
+  let ringKey = '';
 
   function applyQuality(q: Quality) {
     quality = q;
@@ -210,420 +337,428 @@ export async function showGlobe(root: HTMLElement) {
     globe.renderer().setPixelRatio(q === 'high' ? Math.min(dpr, 2) : q === 'medium' ? Math.min(dpr, 1.25) : 1);
     globe.showAtmosphere(q !== 'low');
     globe.globeImageUrl(q === 'low' ? '/img/earth-dark.jpg' : '/img/earth-night.jpg');
-    globe.hexPolygonResolution(q === 'low' ? 2 : 3);
+    document.body.classList.toggle('q-low', q === 'low');
+    for (const a of arcs.values()) a.sig = ''; // stroke style depends on quality
   }
   applyQuality(quality);
 
-  // Auto quality: step down while the frame rate stays poor.
+  // ---------- data state ----------
+  let frame: Frame | null = null;
+  const sCat = new Smooth();
+  const sTop = new Smooth();
+  const sDev = new Smooth();
+  const oCat = new StableOrder();
+  const oTop = new StableOrder();
+  const oDev = new StableOrder();
+  const hist: { t: number; up: number; down: number }[] = [];
+  const shown = { up: 0, down: 0 };
+  const target = { up: 0, down: 0 };
+  type TopMeta = { name: string; sub: string; cc: string; color: string; up: number; down: number };
+  const topMeta = new Map<string, TopMeta>();
+
+  const devName = (k: string) => {
+    const d = frame?.devices[k];
+    const name = d?.name || (k === 'router' ? t('hud.router') : k);
+    return (d?.icon ? d.icon + ' ' : '') + name;
+  };
+
+  function setFilter(k: string | null) {
+    filter = k;
+    hist.length = 0;
+    sCat.v.clear();
+    sTop.v.clear();
+    filterChip.classList.toggle('hidden', !filter);
+    if (filter) filterChip.textContent = `◎ ${t('hud.onlyDevice', { name: devName(filter) })}  ✕`;
+    onFrame(true);
+  }
+
+  /** Runs once per server frame (1 s). */
+  function onFrame(force = false) {
+    if (!frame) return;
+    const f = frame;
+    const rows = filter ? f.rows.filter((r) => r.d === filter) : f.rows;
+
+    const byPoint = new Map<string, Agg>();
+    const byCat = new Map<string, number>();
+    const tops = new Map<string, TopMeta>();
+    let up = 0;
+    let down = 0;
+    for (const r of rows) {
+      up += r.u;
+      down += r.w;
+      const tt = r.u + r.w;
+      byCat.set(r.c, (byCat.get(r.c) ?? 0) + tt);
+      const pt: Point | undefined = r.p ? f.points[r.p] : undefined;
+      // Regions group by what is displayed, so two spellings of one city merge.
+      const key = topMode === 'host' ? `${r.h}|${r.i}` : placeName(pt);
+      let e = tops.get(key);
+      if (!e) {
+        e =
+          topMode === 'host'
+            ? { name: r.h, sub: r.i ? t('hud.inbound') : r.o || (pt ? placeName(pt) : ''), cc: pt?.cc ?? '', color: catColor(r.i ? 'inbound' : r.c), up: 0, down: 0 }
+            : { name: placeName(pt), sub: '', cc: pt?.cc ?? '', color: '#2ee6ff', up: 0, down: 0 };
+        tops.set(key, e);
+      }
+      e.up += r.u;
+      e.down += r.w;
+      if (!r.p || !pt) continue;
+      const a = byPoint.get(r.p) ?? { up: 0, down: 0, n: 0, cats: new Map(), hosts: new Map(), inbound: 0 };
+      a.up += r.u;
+      a.down += r.w;
+      a.n += r.n;
+      a.cats.set(r.c, (a.cats.get(r.c) ?? 0) + tt + 1);
+      a.hosts.set(r.h, (a.hosts.get(r.h) ?? 0) + tt + 1);
+      if (r.i) a.inbound += tt + 1;
+      byPoint.set(r.p, a);
+    }
+    if (!filter) {
+      up = f.total.up;
+      down = f.total.down;
+    }
+    target.up = up;
+    target.down = down;
+    const now = performance.now();
+    hist.push({ t: now, up, down });
+    while (hist.length && now - hist[0].t > (HISTORY_SEC + 2) * 1000) hist.shift();
+
+    sCat.update(byCat);
+    sTop.update(new Map([...tops].map(([k, v]) => [k, v.up + v.down])));
+    for (const [k, v] of tops) topMeta.set(k, v);
+    for (const k of topMeta.keys()) if (!sTop.v.has(k)) topMeta.delete(k);
+    const devRates = new Map<string, number>();
+    for (const r of f.rows) devRates.set(r.d, (devRates.get(r.d) ?? 0) + r.u + r.w);
+    for (const k of Object.keys(f.today.devs)) if (!devRates.has(k)) devRates.set(k, 0);
+    sDev.update(devRates);
+
+    updateGlobe(f, byPoint);
+    refreshPanels(force);
+  }
+
+  function updateGlobe(f: Frame, byPoint: Map<string, Agg>) {
+    const ranked = [...byPoint.entries()].sort((a, b) => b[1].up + b[1].down - (a[1].up + a[1].down)).slice(0, MAX_ARCS);
+    const maxT = Math.max(1, ...ranked.map(([, a]) => a.up + a.down));
+    let arcsChanged = false;
+    let ptsChanged = false;
+    const keep = new Set<string>();
+    const rings: any[] = [homeRing];
+    ranked.forEach(([key, a], idx) => {
+      const p = f.points[key];
+      const total = a.up + a.down;
+      const cat = [...a.cats.entries()].sort((x, y) => y[1] - x[1])[0][0];
+      const inbound = a.inbound > (a.up + a.down + a.n) / 2;
+      const color = inbound ? catColor('inbound') : catColor(cat);
+      const norm = Math.log10(1 + total) / Math.log10(1 + maxT);
+      // Visual level: changes rarely, so geometry is rebuilt rarely.
+      const level = total < 64 ? 0 : 1 + Math.min(4, Math.floor(norm * 5));
+      keep.add(key);
+      const info =
+        `<b>${flag(p.cc)} ${esc(placeName(p))}</b><br>↓ ${rate(a.down)} &nbsp; ↑ ${rate(a.up)} · ${esc(t('hud.connCount', { n: a.n }))}<br>` +
+        [...a.hosts.entries()].sort((x, y) => y[1] - x[1]).slice(0, 4).map(([hst]) => esc(hst)).join('<br>');
+
+      const sig = `${level}|${color}|${inbound ? 1 : 0}|${quality === 'low' ? 1 : 0}`;
+      let arc = arcs.get(key);
+      if (!arc) {
+        arc = { startLat: 0, startLng: 0, endLat: 0, endLng: 0, color: ['', ''], stroke: null, time: 0, gap: 0, info, sig: '' };
+        arcs.set(key, arc);
+      }
+      arc.info = info;
+      if (arc.sig !== sig) {
+        arc.sig = sig;
+        arcsChanged = true;
+        if (inbound) Object.assign(arc, { startLat: p.lat, startLng: p.lon, endLat: home.lat, endLng: home.lon });
+        else Object.assign(arc, { startLat: home.lat, startLng: home.lon, endLat: p.lat, endLng: p.lon });
+        arc.color = level === 0 ? [hexA(color, 0.1), hexA(color, 0.4)] : [hexA(color, 0.35), hexA(color, 1)];
+        arc.stroke = quality === 'low' ? null : level === 0 ? 0.15 : 0.15 + level * 0.25;
+        arc.time = level === 0 ? 6000 : 4000 - level * 650;
+        arc.gap = level === 0 ? 2 : 1 - level * 0.12;
+      }
+
+      const psig = `${level}|${color}`;
+      let pt = pts.get(key);
+      if (!pt) {
+        pt = { lat: p.lat, lng: p.lon, alt: 0, color, info, sig: '' };
+        pts.set(key, pt);
+      }
+      pt.info = info;
+      if (pt.sig !== psig) {
+        pt.sig = psig;
+        pt.alt = 0.01 + level * 0.025;
+        pt.color = color;
+        ptsChanged = true;
+      }
+      if (quality !== 'low' && idx < 8 && level > 0)
+        rings.push({ key, lat: p.lat, lng: p.lon, color, max: 1.2 + level * 0.7, speed: 0.8 + level * 0.4, period: 1900 - level * 220 });
+    });
+    for (const k of [...arcs.keys()])
+      if (!keep.has(k)) {
+        arcs.delete(k);
+        arcsChanged = true;
+      }
+    for (const k of [...pts.keys()])
+      if (!keep.has(k)) {
+        pts.delete(k);
+        ptsChanged = true;
+      }
+    if (arcsChanged) globe.arcsData([...arcs.values()]);
+    if (ptsChanged) globe.pointsData([...pts.values()]);
+    const rk = rings.map((r) => `${r.key ?? 'home'}${r.max}${r.color}`).join();
+    if (rk !== ringKey) {
+      ringKey = rk;
+      globe.ringsData(rings);
+    }
+
+    // City labels for the busiest few destinations.
+    const want = new Set(ranked.slice(0, quality === 'low' ? 3 : 6).filter(([, a]) => a.up + a.down > 1024).map(([k]) => k));
+    for (const [k, l] of labels)
+      if (!want.has(k)) {
+        l.el.remove();
+        labels.delete(k);
+      }
+    for (const k of want) {
+      const p = f.points[k];
+      const a = byPoint.get(k)!;
+      let l = labels.get(k);
+      if (!l) {
+        l = { lat: p.lat, lng: p.lon, alt: 0.03, el: h('div.globe-label'), w: 0, text: '' };
+        labelLayer.append(l.el);
+        labels.set(k, l);
+      }
+      setLabel(l, `${placeName(p, true)} ${rate(a.up + a.down)}`);
+    }
+  }
+
+  /** Panels: numbers update every frame; row order only every few seconds. */
+  function refreshPanels(force: boolean) {
+    if (!frame) return;
+    const f = frame;
+
+    // Categories: fixed slots, fixed height.
+    const nowMode = catMode === 'now' || !!filter;
+    const catScore = nowMode ? sCat.v : new Map(Object.entries(f.today.cats).map(([k, v]) => [k, v[0] + v[1]] as [string, number]));
+    const order = oCat.pick(catScore, LEGEND_SLOTS, force);
+    const total = [...catScore.values()].reduce((s, v) => s + v, 0);
+    const shownSum = order.reduce((s, k) => s + (catScore.get(k) ?? 0), 0);
+    let acc = 0;
+    segs.forEach((seg, i) => {
+      const k = order[i];
+      const v = i < LEGEND_SLOTS ? (k ? (catScore.get(k) ?? 0) : 0) : Math.max(0, total - shownSum);
+      const len = total > 0 ? (v / total) * C : 0;
+      seg.style.stroke = i < LEGEND_SLOTS ? (k ? catColor(k) : 'transparent') : '#3a4a5c';
+      seg.style.strokeDasharray = `${Math.max(0, len - 1.2)} ${C}`;
+      seg.style.strokeDashoffset = String(-acc);
+      acc += len;
+    });
+    setText(donutVal, total > 0 ? (nowMode ? rate(total) : bytes(total)) : '—');
+    setText(donutSub, nowMode ? t('hud.current') : t('hud.todayShort'));
+    setText(legendNote, filter && catMode === 'today' ? t('hud.filterNowOnly') : '');
+    legendRows.forEach((r, i) => {
+      const k = order[i];
+      r.row.classList.toggle('empty', !k);
+      r.sw.style.background = k ? catColor(k) : 'transparent';
+      setText(r.name, k ? catName(k) : '');
+      setText(r.pct, k && total > 0 ? `${Math.round(((catScore.get(k) ?? 0) / total) * 100)}%` : '');
+    });
+
+    // Top destinations.
+    const tOrder = oTop.pick(sTop.v, TOP_SLOTS, force);
+    const tMax = Math.max(1, ...tOrder.map((k) => sTop.get(k)));
+    topRows.forEach((r, i) => {
+      const k = tOrder[i];
+      const m = k ? topMeta.get(k) : undefined;
+      r.row.classList.toggle('empty', !m);
+      if (!m) {
+        r.key = '';
+        return;
+      }
+      const v = sTop.get(k);
+      if (r.key !== k) {
+        r.key = k;
+        setText(r.name, `${flag(m.cc)} ${m.name}`);
+        r.bar.style.background = m.color;
+        r.bar.style.boxShadow = `0 0 6px ${m.color}`;
+      }
+      setText(r.sub, m.sub);
+      setText(r.val, rate(v));
+      r.bar.style.width = `${(v / tMax) * 100}%`;
+      r.row.title = `↓ ${rate(m.down)}  ↑ ${rate(m.up)}`;
+    });
+    topEmpty.classList.toggle('hidden', tOrder.length > 0);
+
+    // Devices (never filtered: this is where the filter is chosen).
+    const dScore = new Map<string, number>();
+    for (const [k, v] of sDev.v) dScore.set(k, v * 1000);
+    for (const [k, v] of Object.entries(f.today.devs)) dScore.set(k, (dScore.get(k) ?? 0) + (v[0] + v[1]) / 1e6 + 1e-9);
+    const dOrder = oDev.pick(dScore, DEV_SLOTS, force);
+    const dMax = Math.max(1, ...dOrder.map((k) => sDev.get(k)));
+    devRows.forEach((r, i) => {
+      const k = dOrder[i];
+      r.row.classList.toggle('empty', !k);
+      r.key = k ?? '';
+      if (!k) return;
+      const v = sDev.get(k);
+      const td = f.today.devs[k];
+      setText(r.name, devName(k));
+      setText(r.sub, t('hud.todayBytes', { v: bytes(td ? td[0] + td[1] : 0) }));
+      setText(r.val, rate(v));
+      r.bar.style.width = `${(v / dMax) * 100}%`;
+      r.row.classList.toggle('sel', filter === k);
+    });
+
+    // Top bar and status.
+    const conns = filter ? f.rows.filter((r) => r.d === filter).reduce((s, r) => s + r.n, 0) : f.total.conns;
+    setText(kvConns, String(conns));
+    const td = filter ? (f.today.devs[filter] ?? [0, 0]) : [f.today.up, f.today.down];
+    setText(kvToday, `${bytes(td[1])} / ${bytes(td[0])}`);
+    setText(todayChip, t('hud.today', { down: bytes(f.today.down), up: bytes(f.today.up) }));
+    const srcSig = f.sources.map((s) => s.id + s.status.state).join();
+    if (srcChips.dataset.sig !== srcSig) {
+      srcChips.dataset.sig = srcSig;
+      srcChips.replaceChildren(...f.sources.map((s) => h('span.chip', null, h('i.dot', { class: s.status.state }), s.name)));
+    }
+    f.sources.forEach((s, i) => {
+      const c = srcChips.children[i] as HTMLElement | undefined;
+      if (c) c.title = s.status.state === 'error' ? msgText(s.status.error) : '';
+    });
+    const bad = f.sources.filter((s) => s.status.state === 'error');
+    const msg = !f.sources.length ? t('hud.noSources') : bad.map((s) => `${s.name}: ${msgText((s.status as any).error)}`).join('; ');
+    banner.classList.toggle('hidden', !msg);
+    setText(banner, msg);
+  }
+
+  // ---------- animation loop: smooth numbers, sparkline, labels ----------
+  let alive = true;
+  let lastSpark = 0;
+  const loop = (now: number) => {
+    if (!alive) return;
+    // Numbers glide toward the latest value.
+    for (const k of ['up', 'down'] as const) shown[k] += (target[k] - shown[k]) * 0.08;
+    const [dv, du] = fmtRate(shown.down);
+    const [uv, uu] = fmtRate(shown.up);
+    setText(vDown, dv);
+    setText(vDownU, du);
+    setText(vUp, uv);
+    setText(vUpU, uu);
+    if (now - lastSpark > 33) {
+      lastSpark = now;
+      drawSpark(now);
+    }
+    placeLabels();
+    requestAnimationFrame(loop);
+  };
+
+  let sparkMax = 1;
+  function drawSpark(now: number) {
+    const ctx = spark.getContext('2d');
+    if (!ctx || !spark.width) return;
+    const dpr = window.devicePixelRatio || 1;
+    const w = spark.width / dpr;
+    const hh = spark.height / dpr;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, w, hh);
+    const peak = Math.max(1, ...hist.map((p) => Math.max(p.up, p.down)));
+    sparkMax += (peak * 1.15 - sparkMax) * 0.06;
+    const pps = w / HISTORY_SEC;
+    // The newest sample sits one second from the right edge, so the curve scrolls continuously.
+    const x = (tt: number) => w - ((now - tt) / 1000 + 1) * pps;
+    const y = (v: number) => hh - 2 - Math.min(1, v / sparkMax) * (hh - 6);
+    ctx.strokeStyle = 'rgba(46,230,255,0.08)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    for (let g = 1; g < 4; g++) {
+      ctx.moveTo(0, (hh / 4) * g);
+      ctx.lineTo(w, (hh / 4) * g);
+    }
+    ctx.stroke();
+    if (hist.length >= 2) {
+      const path = (key: 'up' | 'down') => {
+        ctx.beginPath();
+        hist.forEach((p, i) => {
+          const px = x(p.t);
+          const py = y(p[key]);
+          if (!i) ctx.moveTo(px, py);
+          else {
+            const q = hist[i - 1];
+            const mx = (x(q.t) + px) / 2;
+            ctx.bezierCurveTo(mx, y(q[key]), mx, py, px, py);
+          }
+        });
+      };
+      const grad = ctx.createLinearGradient(0, 0, 0, hh);
+      grad.addColorStop(0, 'rgba(46,230,255,0.4)');
+      grad.addColorStop(1, 'rgba(46,230,255,0)');
+      path('down');
+      ctx.lineTo(x(hist[hist.length - 1].t), hh);
+      ctx.lineTo(x(hist[0].t), hh);
+      ctx.fillStyle = grad;
+      ctx.fill();
+      path('down');
+      ctx.strokeStyle = '#2ee6ff';
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+      path('up');
+      ctx.strokeStyle = '#ffb547';
+      ctx.lineWidth = 1.2;
+      ctx.stroke();
+    }
+    ctx.font = '10px ui-monospace, monospace';
+    ctx.fillStyle = 'rgba(111,138,168,0.9)';
+    ctx.fillText(rate(sparkMax), 2, 10);
+  }
+
+  function placeLabels() {
+    const cam = globe.camera().position;
+    const all = [homeLabel, ...labels.values()];
+    // Measure first (only labels whose text changed), then write: no read/write interleaving.
+    for (const l of all) if (!l.w) l.w = l.el.offsetWidth || 80;
+    const placed: { x: number; y: number; w: number }[] = [];
+    for (const l of all) {
+      const p = globe.getCoords(l.lat, l.lng, l.alt);
+      const facing = p.x * (cam.x - p.x) + p.y * (cam.y - p.y) + p.z * (cam.z - p.z) > 0;
+      const sc = facing ? globe.getScreenCoords(l.lat, l.lng, l.alt) : null;
+      const hit = sc && placed.some((o) => Math.abs(o.x - sc.x) < (o.w + l.w) / 2 + 6 && Math.abs(o.y - sc.y) < 18);
+      if (!sc || hit) {
+        if (l.el.style.opacity !== '0') l.el.style.opacity = '0';
+        continue;
+      }
+      placed.push({ x: sc.x, y: sc.y, w: l.w });
+      l.el.style.opacity = '1';
+      l.el.style.transform = `translate3d(${sc.x.toFixed(1)}px, ${sc.y.toFixed(1)}px, 0) translate(-50%, -140%)`;
+    }
+  }
+
+  // Step quality down while the frame rate stays poor.
   if (meta.display.quality === 'auto') {
     let frames = 0;
     let since = performance.now();
     const tick = () => {
+      if (!alive) return;
       frames++;
       const now = performance.now();
       if (now - since > 4000) {
         const fps = (frames * 1000) / (now - since);
         frames = 0;
         since = now;
-        if (fps < 28 && quality !== 'low') applyQuality(quality === 'high' ? 'medium' : 'low');
+        if (fps < 40 && quality !== 'low') applyQuality(quality === 'high' ? 'medium' : 'low');
       }
       if (quality !== 'low') requestAnimationFrame(tick);
     };
     setTimeout(() => requestAnimationFrame(tick), 3000);
   }
 
-  // Home beacon.
-  const homeRing = { lat: home.lat, lng: home.lon, color: '#2ee6ff', max: 6, speed: 2.2, period: 1100 };
-  const labelLayer = h('div', { style: { position: 'absolute', inset: '0', pointerEvents: 'none', overflow: 'hidden' } });
-  stage.append(labelLayer);
-  const homeLabel = { lat: home.lat, lng: home.lon, alt: 0.02, el: h('div.globe-label', null, `◉ ${home.name}`) };
-  labelLayer.append(homeLabel.el);
-
-  // HTML labels positioned by hand each frame; hidden when on the far side of the globe.
-  let labelsAlive = true;
-  const placeLabels = () => {
-    if (!labelsAlive) return;
-    const cam = globe.camera().position;
-    // Home first, then busiest destinations; drop any label that would overlap one already placed.
-    const placed: { x: number; y: number; w: number }[] = [];
-    for (const l of [homeLabel, ...labels.values()]) {
-      const p = globe.getCoords(l.lat, l.lng, l.alt);
-      const facing = p.x * (cam.x - p.x) + p.y * (cam.y - p.y) + p.z * (cam.z - p.z) > 0;
-      const sc = facing ? globe.getScreenCoords(l.lat, l.lng, l.alt) : null;
-      const w = l.el.offsetWidth || 80;
-      const hit = sc && placed.some((o) => Math.abs(o.x - sc.x) < (o.w + w) / 2 + 6 && Math.abs(o.y - sc.y) < 18);
-      if (!sc || hit) {
-        l.el.style.visibility = 'hidden';
-        continue;
-      }
-      placed.push({ x: sc.x, y: sc.y, w });
-      l.el.style.visibility = '';
-      l.el.style.left = `${sc.x}px`;
-      l.el.style.top = `${sc.y}px`;
-    }
-    requestAnimationFrame(placeLabels);
-  };
-
-  // Arc and point objects are reused between frames so animations keep running.
-  const arcs = new Map<string, ArcObj>();
-  const pts = new Map<string, PointObj>();
-  const labels = new Map<string, { lat: number; lng: number; alt: number; el: HTMLElement }>();
-
-  // ---------- data ----------
-  let frame: Frame | null = null;
-  const hist: { up: number; down: number }[] = [];
-  const devName = (k: string) => {
-    const d = frame?.devices[k];
-    return (d?.icon ? d.icon + ' ' : '') + (d?.name || k);
-  };
-
-  function render() {
-    if (!frame) return;
-    const f = frame;
-    const rows = filter ? f.rows.filter((r) => r.d === filter) : f.rows;
-
-    // Per destination point.
-    const byPoint = new Map<string, Agg>();
-    const byHost = new Map<string, { up: number; down: number; n: number; cat: string; p: string; o?: string; i: number }>();
-    const byRegion = new Map<string, { up: number; down: number; n: number; cc: string; label: string }>();
-    const byCat = new Map<string, number>();
-    const byExit = new Map<string, { up: number; down: number; n: number }>();
-    let up = 0;
-    let down = 0;
-    for (const r of rows) {
-      up += r.u;
-      down += r.w;
-      const t = r.u + r.w;
-      byCat.set(r.c, (byCat.get(r.c) ?? 0) + t);
-      const e = byExit.get(r.x) ?? { up: 0, down: 0, n: 0 };
-      e.up += r.u;
-      e.down += r.w;
-      e.n += r.n;
-      byExit.set(r.x, e);
-      const hk = `${r.h}|${r.i}`;
-      const hh = byHost.get(hk) ?? { up: 0, down: 0, n: 0, cat: r.c, p: r.p, o: r.o, i: r.i };
-      hh.up += r.u;
-      hh.down += r.w;
-      hh.n += r.n;
-      byHost.set(hk, hh);
-      if (!r.p) continue;
-      const pt = f.points[r.p];
-      const a = byPoint.get(r.p) ?? { up: 0, down: 0, n: 0, cats: new Map(), hosts: new Map(), inbound: 0 };
-      a.up += r.u;
-      a.down += r.w;
-      a.n += r.n;
-      a.cats.set(r.c, (a.cats.get(r.c) ?? 0) + t + 1);
-      a.hosts.set(r.h, (a.hosts.get(r.h) ?? 0) + t + 1);
-      if (r.i) a.inbound += t + 1;
-      byPoint.set(r.p, a);
-      const rk = `${pt.cc}|${pt.city}`;
-      const rg = byRegion.get(rk) ?? { up: 0, down: 0, n: 0, cc: pt.cc, label: [pt.country, pt.city].filter(Boolean).join(' · ') };
-      rg.up += r.u;
-      rg.down += r.w;
-      rg.n += r.n;
-      byRegion.set(rk, rg);
-    }
-    if (!filter) {
-      up = f.total.up;
-      down = f.total.down;
-    }
-
-    // ----- globe layers -----
-    const maxT = Math.max(1, ...[...byPoint.values()].map((a) => a.up + a.down));
-    const seen = new Set<string>();
-    const pointList: PointObj[] = [];
-    const ringList: any[] = [homeRing];
-    const ranked = [...byPoint.entries()].sort((a, b) => b[1].up + b[1].down - (a[1].up + a[1].down));
-    ranked.forEach(([key, a], idx) => {
-      const p = f.points[key];
-      const t = a.up + a.down;
-      const cat = top(a.cats)!;
-      const inbound = a.inbound > (a.up + a.down + a.n) / 2;
-      const color = inbound ? catColor('inbound') : catColor(cat);
-      const norm = Math.log10(1 + t) / Math.log10(1 + maxT); // 0..1
-      const info =
-        `<b>${flag(p.cc)} ${esc([p.country, p.city].filter(Boolean).join(' · '))}</b><br>` +
-        `↓ ${rate(a.down)} &nbsp; ↑ ${rate(a.up)} · ${a.n} 连接<br>` +
-        [...a.hosts.entries()].sort((x, y) => y[1] - x[1]).slice(0, 4).map(([hst]) => esc(hst)).join('<br>');
-      seen.add(key);
-      let arc = arcs.get(key);
-      if (!arc) {
-        arc = { key, startLat: home.lat, startLng: home.lon, endLat: p.lat, endLng: p.lon, color: ['', ''], stroke: null, time: 0, gap: 0, info: '' };
-        arcs.set(key, arc);
-      }
-      // Inbound traffic flows toward home.
-      if (inbound) Object.assign(arc, { startLat: p.lat, startLng: p.lon, endLat: home.lat, endLng: home.lon });
-      else Object.assign(arc, { startLat: home.lat, startLng: home.lon, endLat: p.lat, endLng: p.lon });
-      const idle = t < 64;
-      arc.color = idle ? [hexA(color, 0.1), hexA(color, 0.4)] : [hexA(color, 0.35), hexA(color, 1)];
-      arc.stroke = quality === 'low' ? null : idle ? 0.15 : 0.25 + norm * 1.1;
-      arc.time = idle ? 6000 : 3800 - norm * 3000;
-      arc.gap = idle ? 2 : 0.9 - norm * 0.5;
-      arc.info = info;
-
-      let pt = pts.get(key);
-      if (!pt) {
-        pt = { key, lat: p.lat, lng: p.lon, alt: 0, color, info };
-        pts.set(key, pt);
-      }
-      pt.alt = 0.01 + norm * 0.12;
-      pt.color = color;
-      pt.info = info;
-      pointList.push(pt);
-      if (quality !== 'low' && idx < 10 && !idle)
-        ringList.push({ lat: p.lat, lng: p.lon, color, max: 1.5 + norm * 3, speed: 1 + norm * 2, period: 1800 - norm * 900 });
-    });
-    for (const k of arcs.keys()) if (!seen.has(k)) arcs.delete(k);
-    for (const k of pts.keys()) if (!seen.has(k)) pts.delete(k);
-    globe.arcsData([...arcs.values()]);
-    globe.pointsData(pointList);
-    globe.ringsData(ringList);
-
-    const labelKeys = new Set(ranked.slice(0, quality === 'low' ? 3 : 6).filter(([, a]) => a.up + a.down > 1024).map(([k]) => k));
-    for (const [k, l] of labels)
-      if (!labelKeys.has(k)) {
-        l.el.remove();
-        labels.delete(k);
-      }
-    for (const k of labelKeys) {
-      const p = f.points[k];
-      const a = byPoint.get(k)!;
-      let l = labels.get(k);
-      if (!l) {
-        l = { lat: p.lat, lng: p.lon, alt: 0.03, el: h('div.globe-label') };
-        labelLayer.append(l.el);
-        labels.set(k, l);
-      }
-      l.el.textContent = `${p.city || p.country} ${rate(a.up + a.down)}`;
-    }
-
-    // ----- rate panel -----
-    const [dv, du] = fmtRate(down);
-    const [uv, uu] = fmtRate(up);
-    vDown.textContent = dv;
-    vDownU.textContent = du;
-    vUp.textContent = uv;
-    vUpU.textContent = uu;
-    kvConns.textContent = String(filter ? rows.reduce((s, r) => s + r.n, 0) : f.total.conns);
-    const td = filter ? (f.today.devs[filter] ?? [0, 0]) : [f.today.up, f.today.down];
-    kvToday.textContent = `${bytes(td[1])} / ${bytes(td[0])}`;
-    todayChip.textContent = `今日 ↓ ${bytes(f.today.down)}  ↑ ${bytes(f.today.up)}`;
-    drawSpark();
-
-    // ----- categories -----
-    const catVals =
-      catMode === 'now'
-        ? byCat
-        : new Map(
-            Object.entries(filter ? {} : f.today.cats).map(([k, v]) => [k, v[0] + v[1]] as [string, number]),
-          );
-    drawDonut(catVals, catMode === 'now' ? rate : bytes, filter && catMode === 'today' ? '筛选设备时只看实时' : '');
-
-    // ----- top list -----
-    const items =
-      topMode === 'host'
-        ? [...byHost.entries()].map(([k, v]) => ({
-            name: k.split('|')[0],
-            sub: v.i ? '外部访问' : v.o || [f.points[v.p]?.country, f.points[v.p]?.city].filter(Boolean).join(' '),
-            cc: f.points[v.p]?.cc ?? '',
-            t: v.up + v.down,
-            down: v.down,
-            up: v.up,
-            color: catColor(v.i ? 'inbound' : v.cat),
-          }))
-        : [...byRegion.values()].map((v) => ({ name: v.label || v.cc.toUpperCase(), sub: `${v.n} 连接`, cc: v.cc, t: v.up + v.down, down: v.down, up: v.up, color: '#2ee6ff' }));
-    items.sort((a, b) => b.t - a.t);
-    const shown = items.slice(0, 40);
-    const maxI = Math.max(1, ...shown.map((x) => x.t));
-    mount(
-      topList,
-      shown.length
-        ? shown.map((x) =>
-            h(
-              'div.item',
-              { title: `↓ ${rate(x.down)}  ↑ ${rate(x.up)}` },
-              h('div.name', null, `${flag(x.cc)} ${x.name}`, x.sub ? h('small', null, x.sub) : null),
-              h('div.rate', null, rate(x.t)),
-              h('div.bar', null, h('i', { style: { width: `${(x.t / maxI) * 100}%`, background: x.color, boxShadow: `0 0 6px ${x.color}` } })),
-            ),
-          )
-        : h('div.empty', null, '暂无流量'),
-    );
-
-    // ----- devices (always unfiltered) -----
-    const devs = new Map<string, { up: number; down: number; n: number }>();
-    for (const r of f.rows) {
-      const d = devs.get(r.d) ?? { up: 0, down: 0, n: 0 };
-      d.up += r.u;
-      d.down += r.w;
-      d.n += r.n;
-      devs.set(r.d, d);
-    }
-    for (const k of Object.keys(f.today.devs)) if (!devs.has(k)) devs.set(k, { up: 0, down: 0, n: 0 });
-    const devItems = [...devs.entries()]
-      .map(([k, v]) => ({ k, ...v, today: (f.today.devs[k]?.[0] ?? 0) + (f.today.devs[k]?.[1] ?? 0) }))
-      .sort((a, b) => b.up + b.down - (a.up + a.down) || b.today - a.today)
-      .slice(0, 60);
-    const maxD = Math.max(1, ...devItems.map((x) => x.up + x.down));
-    mount(
-      devList,
-      devItems.map((x) =>
-        h(
-          'div.item.click',
-          {
-            class: filter === x.k ? 'sel' : '',
-            onclick: () => {
-              filter = filter === x.k ? null : x.k;
-              render();
-            },
-          },
-          h('div.name', null, devName(x.k), h('small', null, `今日 ${bytes(x.today)}`)),
-          h('div.rate', null, rate(x.up + x.down)),
-          h('div.bar', null, h('i', { style: { width: `${((x.up + x.down) / maxD) * 100}%`, background: '#2ee6ff' } })),
-        ),
-      ),
-    );
-    filterChip.classList.toggle('hidden', !filter);
-    if (filter) filterChip.textContent = `◎ 只看 ${devName(filter)}  ✕`;
-
-    // ----- exits -----
-    const ex = [...byExit.entries()].sort((a, b) => b[1].up + b[1].down - (a[1].up + a[1].down)).slice(0, 8);
-    const totEx = Math.max(1, ex.reduce((s, [, v]) => s + v.up + v.down, 0));
-    mount(
-      exits,
-      ex.length
-        ? ex.map(([name, v]) =>
-            h(
-              'div.exit',
-              { style: { borderLeftColor: name === 'DIRECT' ? '#3dffa8' : '#b388ff' } },
-              h('b', null, name === 'DIRECT' ? '直连 DIRECT' : name),
-              h('span', null, `${rate(v.up + v.down)} · ${Math.round(((v.up + v.down) / totEx) * 100)}%`),
-            ),
-          )
-        : h('span.muted', null, '—'),
-    );
-
-    // ----- sources -----
-    mount(
-      srcChips,
-      f.sources.map((s) =>
-        h('span.chip', { title: s.status.state === 'error' ? s.status.error : '' }, h('i.dot', { class: s.status.state }), s.name),
-      ),
-    );
-    const bad = f.sources.filter((s) => s.status.state === 'error');
-    banner.classList.toggle('hidden', !bad.length && f.sources.length > 0);
-    if (!f.sources.length) banner.textContent = '还没有启用的数据源，去「设置 → 数据源」添加';
-    else if (bad.length) banner.textContent = bad.map((s) => `${s.name}：${(s.status as any).error}`).join('；');
-  }
-
-  function drawSpark() {
-    const dpr = window.devicePixelRatio || 1;
-    const w = spark.clientWidth;
-    const hgt = spark.clientHeight;
-    if (!w) return;
-    spark.width = w * dpr;
-    spark.height = hgt * dpr;
-    const ctx = spark.getContext('2d')!;
-    ctx.scale(dpr, dpr);
-    const max = Math.max(1, ...hist.map((x) => Math.max(x.down, x.up)));
-    const x = (i: number) => (i / (HISTORY - 1)) * w;
-    const y = (v: number) => hgt - 2 - (v / max) * (hgt - 6);
-    const off = HISTORY - hist.length;
-    ctx.strokeStyle = 'rgba(46,230,255,0.08)';
-    for (let g = 1; g < 4; g++) {
-      ctx.beginPath();
-      ctx.moveTo(0, (hgt / 4) * g);
-      ctx.lineTo(w, (hgt / 4) * g);
-      ctx.stroke();
-    }
-    if (hist.length < 2) return;
-    const grad = ctx.createLinearGradient(0, 0, 0, hgt);
-    grad.addColorStop(0, 'rgba(46,230,255,0.45)');
-    grad.addColorStop(1, 'rgba(46,230,255,0)');
-    ctx.beginPath();
-    hist.forEach((p, i) => (i ? ctx.lineTo(x(i + off), y(p.down)) : ctx.moveTo(x(i + off), y(p.down))));
-    ctx.lineTo(x(HISTORY - 1), hgt);
-    ctx.lineTo(x(off), hgt);
-    ctx.fillStyle = grad;
-    ctx.fill();
-    ctx.beginPath();
-    hist.forEach((p, i) => (i ? ctx.lineTo(x(i + off), y(p.down)) : ctx.moveTo(x(i + off), y(p.down))));
-    ctx.strokeStyle = '#2ee6ff';
-    ctx.lineWidth = 1.5;
-    ctx.shadowColor = '#2ee6ff';
-    ctx.shadowBlur = 6;
-    ctx.stroke();
-    ctx.beginPath();
-    hist.forEach((p, i) => (i ? ctx.lineTo(x(i + off), y(p.up)) : ctx.moveTo(x(i + off), y(p.up))));
-    ctx.strokeStyle = '#ffb547';
-    ctx.shadowColor = '#ffb547';
-    ctx.lineWidth = 1.2;
-    ctx.stroke();
-    ctx.font = '10px ui-monospace, monospace';
-    ctx.shadowBlur = 0;
-    ctx.fillStyle = 'rgba(111,138,168,0.9)';
-    ctx.fillText(rate(max), 2, 10);
-  }
-
-  function drawDonut(vals: Map<string, number>, fmt: (n: number) => string, note: string) {
-    const list = [...vals.entries()].filter(([, v]) => v > 0).sort((a, b) => b[1] - a[1]);
-    const total = list.reduce((s, [, v]) => s + v, 0);
-    const ns = 'http://www.w3.org/2000/svg';
-    donut.replaceChildren();
-    const r = 46;
-    const c = 2 * Math.PI * r;
-    const bg = document.createElementNS(ns, 'circle');
-    Object.entries({ cx: 60, cy: 60, r, fill: 'none', stroke: 'rgba(46,230,255,0.08)', 'stroke-width': 14 }).forEach(([k, v]) => bg.setAttribute(k, String(v)));
-    donut.append(bg);
-    let acc = 0;
-    for (const [id, v] of list) {
-      const seg = document.createElementNS(ns, 'circle');
-      const len = (v / total) * c;
-      Object.entries({
-        cx: 60, cy: 60, r, fill: 'none', stroke: catColor(id), 'stroke-width': 14,
-        'stroke-dasharray': `${Math.max(0, len - 1.2)} ${c}`, 'stroke-dashoffset': String(-acc), transform: 'rotate(-90 60 60)',
-      }).forEach(([k, val]) => seg.setAttribute(k, String(val)));
-      seg.style.filter = `drop-shadow(0 0 3px ${catColor(id)})`;
-      donut.append(seg);
-      acc += len;
-    }
-    const txt = document.createElementNS(ns, 'text');
-    Object.entries({ x: 60, y: 58, 'text-anchor': 'middle', fill: '#d8ecff', 'font-size': 13, 'font-family': 'ui-monospace, monospace' }).forEach(([k, v]) => txt.setAttribute(k, String(v)));
-    txt.textContent = total ? fmt(total) : '—';
-    const sub = document.createElementNS(ns, 'text');
-    Object.entries({ x: 60, y: 74, 'text-anchor': 'middle', fill: '#6f8aa8', 'font-size': 9 }).forEach(([k, v]) => sub.setAttribute(k, String(v)));
-    sub.textContent = catMode === 'now' ? '当前' : '今日';
-    donut.append(txt, sub);
-    mount(
-      legend,
-      note ? h('div.muted', null, note) : null,
-      list.slice(0, 12).map(([id, v]) =>
-        h('div', null, h('i', { style: { background: catColor(id) } }), h('span', null, catName(id)), h('em', null, `${Math.round((v / total) * 100)}%`)),
-      ),
-    );
-  }
-
-  setInterval(() => {
-    clock.textContent = new Date().toLocaleTimeString('zh-CN', { hour12: false });
-  }, 1000);
+  const tickClock = () => setText(clock, new Date().toLocaleTimeString(lang === 'zh' ? 'zh-CN' : 'en-GB', { hour12: false }));
+  tickClock();
+  const clockTimer = setInterval(tickClock, 1000);
 
   // ---------- live feed ----------
   let ws: WebSocket | null = null;
   let retry = 1000;
-  let alive = true;
   const connect = () => {
     if (!alive) return;
     ws = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/api/live`);
     ws.onmessage = (ev) => {
       retry = 1000;
       frame = JSON.parse(ev.data) as Frame;
-      const rows: Row[] = filter ? frame.rows.filter((r) => r.d === filter) : frame.rows;
-      const v = filter
-        ? { up: rows.reduce((s, r) => s + r.u, 0), down: rows.reduce((s, r) => s + r.w, 0) }
-        : { up: frame.total.up, down: frame.total.down };
-      hist.push(v);
-      if (hist.length > HISTORY) hist.shift();
-      render();
+      onFrame();
     };
     ws.onclose = (ev) => {
       if (ev.code === 4401) {
@@ -632,18 +767,17 @@ export async function showGlobe(root: HTMLElement) {
       }
       if (!alive) return;
       banner.classList.remove('hidden');
-      banner.textContent = '与服务器的连接断开，正在重连…';
+      setText(banner, t('hud.reconnecting'));
       setTimeout(connect, retry);
       retry = Math.min(retry * 2, 15000);
     };
   };
   connect();
-  requestAnimationFrame(placeLabels);
+  requestAnimationFrame(loop);
 
-  // Called by the router when navigating away.
   return () => {
     alive = false;
-    labelsAlive = false;
+    clearInterval(clockTimer);
     ws?.close();
     window.removeEventListener('resize', resize);
     globe._destructor?.();

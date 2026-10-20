@@ -26,7 +26,7 @@ export function isAuthed(req: FastifyRequest): boolean {
 }
 
 export async function requireAuth(req: FastifyRequest, reply: FastifyReply) {
-  if (!isAuthed(req)) return reply.code(401).send({ error: '需要登录' });
+  if (!isAuthed(req)) return reply.code(401).send({ error: 'unauthorized' });
 }
 
 /** Five tries per minute per address is plenty for a person and slow for a script. */

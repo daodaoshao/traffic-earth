@@ -8,7 +8,8 @@ import { audit, db } from './db.js';
 import { engine } from './engine.js';
 import { env } from './env.js';
 import { geoStatus, updateGeo } from './geo.js';
-import { pendingPassword, prepareSetup, RPC_USER, uninstallScript } from './openwrt-setup.js';
+import { AppError, asLang } from './msg.js';
+import { pendingPassword, pendingSetup, prepareSetup, RPC_USER, scriptText, setupScript, uninstallScript } from './openwrt-setup.js';
 import * as settings from './settings.js';
 import type { SourceInput } from './settings.js';
 
@@ -23,26 +24,27 @@ async function setupOrAuth(req: FastifyRequest, reply: FastifyReply) {
 function withSecret(input: SourceInput & { setupToken?: string }): SourceInput {
   if (input.type === 'openwrt' && input.setupToken) {
     const pw = pendingPassword(input.setupToken);
-    if (!pw) throw Object.assign(new Error('配置命令已过期，请重新生成'), { statusCode: 400 });
+    if (!pw) throw new AppError('setupExpired');
     return { ...input, username: RPC_USER, secret: pw };
   }
   return input;
 }
 
 function validSource(i: SourceInput) {
-  if (!i || !['openwrt', 'mihomo'].includes(i.type)) throw Object.assign(new Error('未知的数据源类型'), { statusCode: 400 });
+  if (!i || !['openwrt', 'mihomo'].includes(i.type)) throw new AppError('badSourceType');
   try {
     settings.normalizeUrl(i.url ?? '');
   } catch {
-    throw Object.assign(new Error('地址格式不对'), { statusCode: 400 });
+    throw new AppError('badUrl');
   }
 }
 
 function validHome(h: any) {
   const lat = Number(h?.lat);
   const lon = Number(h?.lon);
-  if (!(Math.abs(lat) <= 90 && Math.abs(lon) <= 180)) throw Object.assign(new Error('坐标不对'), { statusCode: 400 });
-  return { lat, lon, name: String(h?.name ?? '').slice(0, 40) || '家' };
+  if (!(Math.abs(lat) <= 90 && Math.abs(lon) <= 180)) throw new AppError('badCoords');
+  // Empty name: the browser shows "Home" in the viewer's language.
+  return { lat, lon, name: String(h?.name ?? '').slice(0, 40) };
 }
 
 async function testSource(i: SourceInput, prev?: settings.SourceConfig) {
@@ -59,12 +61,12 @@ export function registerApi(app: FastifyInstance) {
   }));
 
   app.post('/api/setup', async (req: any, reply: FastifyReply) => {
-    if (settings.get('setupDone')) return reply.code(409).send({ error: '已经初始化过了' });
+    if (settings.get('setupDone')) throw new AppError('alreadySetup', {}, 409);
     const { password, home, sources } = req.body ?? {};
     if (!env.adminPassword && (typeof password !== 'string' || password.length < 8))
-      return reply.code(400).send({ error: '管理员密码至少 8 位' });
+      throw new AppError('passwordShort');
     const list = (sources ?? []) as Array<SourceInput & { setupToken?: string }>;
-    if (!list.length) return reply.code(400).send({ error: '至少需要一个数据源' });
+    if (!list.length) throw new AppError('needSource');
     list.forEach(validSource);
     const built: settings.SourceConfig[] = [];
     for (const s of list) {
@@ -85,8 +87,8 @@ export function registerApi(app: FastifyInstance) {
 
   app.post('/api/login', async (req: any, reply: FastifyReply) => {
     const r = checkPassword(req.ip, String(req.body?.password ?? ''));
-    if (r === 'throttled') return reply.code(429).send({ error: '尝试太频繁，请一分钟后再试' });
-    if (r === 'bad') return reply.code(401).send({ error: '密码不对' });
+    if (r === 'throttled') throw new AppError('throttled', {}, 429);
+    if (r === 'bad') throw new AppError('badPassword', {}, 401);
     createSession(reply);
     return { ok: true };
   });
@@ -159,7 +161,7 @@ export function registerApi(app: FastifyInstance) {
   app.put('/api/sources/:id', { preHandler: requireAuth }, async (req: any, reply: FastifyReply) => {
     const list = settings.get('sources');
     const idx = list.findIndex((s) => s.id === req.params.id);
-    if (idx < 0) return reply.code(404).send({ error: '数据源不存在' });
+    if (idx < 0) throw new AppError('sourceNotFound', {}, 404);
     const b = { ...req.body, type: list[idx].type } as SourceInput & { setupToken?: string };
     validSource(b);
     list[idx] = settings.buildSource(withSecret(b), list[idx]);
@@ -179,19 +181,18 @@ export function registerApi(app: FastifyInstance) {
     return { ok: true };
   });
 
-  app.post('/api/openwrt/prepare', { preHandler: setupOrAuth }, async (req) => {
-    const { token, script } = prepareSetup();
+  app.post('/api/openwrt/prepare', { preHandler: setupOrAuth }, async (req: any) => {
+    const { token, script } = prepareSetup(asLang(req.body?.lang));
     const proto = (req.headers['x-forwarded-proto'] as string) ?? req.protocol;
-    const url = `${proto}://${req.headers.host}/api/openwrt/setup.sh?t=${token}`;
+    const url = `${proto}://${req.headers.host}/api/openwrt/setup.sh?t=${token}&l=${asLang(req.body?.lang)}`;
     return { token, oneLiner: `wget -qO- '${url}' | sh`, script, uninstall: uninstallScript };
   });
 
   // Fetched by the router itself; the unguessable, expiring token is the credential.
   app.get('/api/openwrt/setup.sh', async (req: any, reply: FastifyReply) => {
-    const pw = pendingPassword(String(req.query?.t ?? ''));
-    if (!pw) return reply.code(404).type('text/plain').send('echo "Traffic Earth: 配置命令已过期，请在网页上重新生成" >&2; exit 1\n');
-    const { setupScript } = await import('./openwrt-setup.js');
-    return reply.type('text/plain; charset=utf-8').send(setupScript(pw));
+    const p = pendingSetup(String(req.query?.t ?? ''));
+    if (!p) return reply.code(404).type('text/plain').send(`echo "Traffic Earth: ${scriptText.expired[asLang(req.query?.l)]}" >&2; exit 1\n`);
+    return reply.type('text/plain; charset=utf-8').send(setupScript(p.password, p.lang));
   });
 
   app.get('/api/devices', { preHandler: requireAuth }, async () =>
@@ -222,8 +223,8 @@ export function registerApi(app: FastifyInstance) {
 
   app.post('/api/password', { preHandler: requireAuth }, async (req: any, reply: FastifyReply) => {
     const { old, password } = req.body ?? {};
-    if (checkPassword(req.ip, String(old ?? '')) !== 'ok') return reply.code(401).send({ error: '原密码不对' });
-    if (typeof password !== 'string' || password.length < 8) return reply.code(400).send({ error: '新密码至少 8 位' });
+    if (checkPassword(req.ip, String(old ?? '')) !== 'ok') throw new AppError('badOldPassword', {}, 401);
+    if (typeof password !== 'string' || password.length < 8) throw new AppError('passwordShort');
     settings.set('passwordHash', hashPassword(password));
     db.prepare('DELETE FROM sessions').run();
     createSession(reply);

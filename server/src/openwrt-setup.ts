@@ -3,6 +3,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { randomToken } from './crypto.js';
 import { md5crypt } from './md5crypt.js';
+import type { Lang } from './msg.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const plugin = fs.readFileSync(path.join(here, '../assets/openwrt/traffic-earth.uc'), 'utf8');
@@ -26,22 +27,31 @@ const acl = JSON.stringify(
 );
 
 /** Pending setups: the browser gets a token, the router fetches the script with it. */
-const pending = new Map<string, { password: string; expires: number }>();
+const pending = new Map<string, { password: string; lang: Lang; expires: number }>();
 
-export function prepareSetup() {
+export function prepareSetup(lang: Lang) {
   for (const [k, v] of pending) if (v.expires < Date.now()) pending.delete(k);
   const token = randomToken(18);
   const password = randomToken(24);
-  pending.set(token, { password, expires: Date.now() + 3600e3 });
-  return { token, password, script: setupScript(password) };
+  pending.set(token, { password, lang, expires: Date.now() + 3600e3 });
+  return { token, password, script: setupScript(password, lang) };
 }
 
-export const pendingPassword = (token: string) => {
+export const pendingSetup = (token: string) => {
   const p = pending.get(token);
-  return p && p.expires > Date.now() ? p.password : undefined;
+  return p && p.expires > Date.now() ? p : undefined;
+};
+export const pendingPassword = (token: string) => pendingSetup(token)?.password;
+
+/** The only text the router prints, in the language the command was generated in. */
+export const scriptText = {
+  needUcode: { zh: '需要 OpenWrt 23.05 或更新版本（缺少 ucode / rpcd-mod-ucode）', en: 'Requires OpenWrt 23.05 or newer (ucode / rpcd-mod-ucode missing)' },
+  acctOn: { zh: '已开启 conntrack 字节计数', en: 'Enabled conntrack byte accounting' },
+  done: { zh: '配置完成，回到网页点「测试连接」', en: 'Done. Go back to the web page and click "Test connection"' },
+  expired: { zh: '配置命令已过期，请在网页上重新生成', en: 'This setup command has expired; generate a new one on the web page' },
 };
 
-export function setupScript(password: string): string {
+export function setupScript(password: string, lang: Lang): string {
   const hash = md5crypt(password);
   return `#!/bin/sh
 # Traffic Earth — OpenWrt setup (read-only).
@@ -49,7 +59,7 @@ export function setupScript(password: string): string {
 # and LuCI's host lists. Undo with the uninstall command shown in Traffic Earth.
 set -e
 if ! command -v ucode >/dev/null 2>&1 || [ ! -e /usr/lib/rpcd/ucode.so ]; then
-	echo "Traffic Earth: 需要 OpenWrt 23.05 或更新版本（缺少 ucode / rpcd-mod-ucode）" >&2
+	echo "Traffic Earth: ${scriptText.needUcode[lang]}" >&2
 	exit 1
 fi
 mkdir -p /usr/share/rpcd/ucode /usr/share/rpcd/acl.d
@@ -68,10 +78,10 @@ uci commit rpcd
 if [ "$(cat /proc/sys/net/netfilter/nf_conntrack_acct 2>/dev/null)" != "1" ]; then
 	echo "net.netfilter.nf_conntrack_acct=1" > /etc/sysctl.d/12-traffic-earth.conf
 	sysctl -q -w net.netfilter.nf_conntrack_acct=1
-	echo "Traffic Earth: 已开启 conntrack 字节计数"
+	echo "Traffic Earth: ${scriptText.acctOn[lang]}"
 fi
 /etc/init.d/rpcd restart
-echo "Traffic Earth: 配置完成，回到网页点「测试连接」"
+echo "Traffic Earth: ${scriptText.done[lang]}"
 `;
 }
 

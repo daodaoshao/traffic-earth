@@ -2,6 +2,8 @@ import { EventEmitter } from 'node:events';
 import net from 'node:net';
 import { isPrivateIp } from '../geo.js';
 import { ipFamily, maskToPrefix, normIp } from '../ip.js';
+import { AppError, toMsg } from '../msg.js';
+import type { TestResult } from './mihomo.js';
 import type { Adapter, FlowConn, HostEntry, Snapshot, SourceStatus } from './types.js';
 
 /**
@@ -26,10 +28,6 @@ interface NetDev {
 }
 
 const NULL_SESSION = '00000000000000000000000000000000';
-const ubusErrors: Record<number, string> = {
-  1: '无效命令', 2: '参数错误', 3: '方法不存在', 4: '对象不存在（插件没装？）', 5: '无数据',
-  6: '没有权限（账号或 ACL 不对）', 7: '超时', 8: '不支持', 9: '未知错误', 10: '连接失败',
-};
 
 export class UbusClient {
   private sid = NULL_SESSION;
@@ -46,7 +44,7 @@ export class UbusClient {
       body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'call', params }),
       signal: AbortSignal.timeout(timeoutMs),
     });
-    if (!res.ok) throw new Error(`/ubus 返回 HTTP ${res.status}`);
+    if (!res.ok) throw new AppError('httpStatus', { path: '/ubus', status: res.status });
     const j = (await res.json()) as { result?: [number, any]; error?: { code: number; message: string } };
     if (j.error) {
       const e = new Error(j.error.message) as Error & { code?: number };
@@ -55,7 +53,7 @@ export class UbusClient {
     }
     const [code, data] = j.result ?? [9, null];
     if (code !== 0) {
-      const e = new Error(ubusErrors[code] ?? `ubus 错误 ${code}`) as Error & { ubus?: number };
+      const e = new AppError('ubus', { code }) as AppError & { ubus?: number };
       e.ubus = code;
       throw e;
     }
@@ -67,7 +65,7 @@ export class UbusClient {
       const d = await this.rpc([NULL_SESSION, 'session', 'login', { username: this.username, password: this.password, timeout: 3600 }]);
       this.sid = d.ubus_rpc_session;
     } catch (e: any) {
-      if (e.ubus === 6) throw new Error('登录失败：账号或密码不对。是否已在路由器上运行配置命令？');
+      if (e.ubus === 6) throw new AppError('owLogin');
       throw e;
     }
   }
@@ -87,10 +85,6 @@ export class UbusClient {
   }
 }
 
-function describe(e: any): string {
-  if (e?.name === 'TimeoutError') return '请求超时';
-  return e?.cause?.code ?? e?.message ?? String(e);
-}
 
 export class OpenWrtAdapter extends EventEmitter implements Adapter {
   status: SourceStatus = { state: 'connecting' };
@@ -149,7 +143,7 @@ export class OpenWrtAdapter extends EventEmitter implements Adapter {
     } catch (e) {
       this.failures++;
       const wait = Math.min(1000 * 2 ** this.failures, 30_000);
-      this.setStatus({ state: 'error', error: describe(e), retryAt: Date.now() + wait });
+      this.setStatus({ state: 'error', error: toMsg(e), retryAt: Date.now() + wait });
       this.schedule(wait);
     }
   }
@@ -277,20 +271,17 @@ export class OpenWrtAdapter extends EventEmitter implements Adapter {
   }
 }
 
-export async function testOpenWrt(url: string, username: string, password: string) {
+export async function testOpenWrt(url: string, username: string, password: string): Promise<TestResult> {
   const c = new UbusClient(url, username, password);
   try {
     await c.login();
     const info = await c.call('traffic-earth', 'info').catch((e: any) => {
-      if (e.ubus === 3 || e.ubus === 4 || e.ubus === 6) throw new Error('登录成功，但读不到插件：请重新运行配置命令（运行后需要 rpcd 重启）');
+      if (e.ubus === 3 || e.ubus === 4 || e.ubus === 6) throw new AppError('owPlugin');
       throw e;
     });
-    if (!info.acct) return { ok: false as const, error: '路由器没有开启 conntrack 计数（net.netfilter.nf_conntrack_acct=0）' };
-    return {
-      ok: true as const,
-      summary: `${info.hostname} · ${info.count}/${info.max} 条连接 · WAN ${info.wan.join(', ') || '未识别'}`,
-    };
+    if (!info.acct) return { ok: false, error: { code: 'owAcct' } };
+    return { ok: true, info: { kind: 'openwrt', host: info.hostname, count: info.count, max: info.max, wan: info.wan } };
   } catch (e) {
-    return { ok: false as const, error: describe(e) };
+    return { ok: false, error: toMsg(e) };
   }
 }

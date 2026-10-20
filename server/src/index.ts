@@ -8,6 +8,7 @@ import './db.js';
 import { registerApi } from './api.js';
 import { engine } from './engine.js';
 import { initGeo } from './geo.js';
+import { AppError } from './msg.js';
 
 const app = Fastify({ logger: { level: env.logLevel }, disableRequestLogging: true, trustProxy: true });
 
@@ -15,9 +16,10 @@ await app.register(cookie);
 await app.register(websocket);
 
 app.setErrorHandler((err: Error & { statusCode?: number }, _req, reply) => {
+  if (err instanceof AppError) return reply.code(err.statusCode).send({ error: err.code, params: err.params });
   const code = err.statusCode ?? 500;
   if (code >= 500) app.log.error(err);
-  reply.code(code).send({ error: err.message });
+  reply.code(code).send({ error: code >= 500 ? 'internal' : 'badRequest', params: { detail: err.message } });
 });
 
 registerApi(app);

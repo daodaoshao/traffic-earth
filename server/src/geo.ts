@@ -16,9 +16,10 @@ import * as settings from './settings.js';
 export interface GeoInfo {
   lat: number;
   lon: number;
-  cc: string; // ISO country code, lower case
-  country: string;
-  city: string;
+  cc: string; // ISO country code, lower case; the browser names the country in its language
+  cityEn: string;
+  cityZh: string; // often missing in DB-IP Lite
+  regionEn: string; // state / province
   asn: number;
   org: string;
 }
@@ -122,14 +123,14 @@ export function lookup(ip: string): GeoInfo | null {
     const c = cityDb.get(ip);
     const a = asnDb?.get(ip);
     if (c?.location) {
-      const names = (c.country?.names ?? {}) as Record<string, string>;
       const cityNames = (c.city?.names ?? {}) as Record<string, string>;
       info = {
         lat: c.location.latitude,
         lon: c.location.longitude,
         cc: (c.country?.iso_code ?? '').toLowerCase(),
-        country: names['zh-CN'] ?? names.en ?? '',
-        city: cityNames['zh-CN'] ?? cityNames.en ?? '',
+        cityEn: cityNames.en ?? '',
+        cityZh: cityNames['zh-CN'] ?? '',
+        regionEn: ((c.subdivisions?.[0]?.names ?? {}) as Record<string, string>).en ?? '',
         asn: a?.autonomous_system_number ?? 0,
         org: a?.autonomous_system_organization ?? '',
       };

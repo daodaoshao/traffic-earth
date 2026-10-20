@@ -1,3 +1,5 @@
+import { type Msg, msgText } from './i18n';
+
 export class ApiError extends Error {
   constructor(
     public status: number,
@@ -18,7 +20,7 @@ export async function api<T = any>(path: string, opts: { method?: string; body?:
   if (res.status === 401 && path !== '/api/login' && path !== '/api/password') {
     location.hash = '#/login';
   }
-  if (!res.ok) throw new ApiError(res.status, data.error ?? `HTTP ${res.status}`);
+  if (!res.ok) throw new ApiError(res.status, msgText({ code: data.error ?? 'internal', params: data.params ?? { detail: `HTTP ${res.status}` } }));
   return data as T;
 }
 
@@ -39,7 +41,7 @@ export interface Meta {
 export type SourceStatus =
   | { state: 'connecting' }
   | { state: 'ok'; since: number }
-  | { state: 'error'; error: string; retryAt: number }
+  | { state: 'error'; error: Msg; retryAt: number }
   | { state: 'disabled' };
 
 export interface Row {
@@ -60,9 +62,15 @@ export interface Point {
   lat: number;
   lon: number;
   cc: string;
-  country: string;
-  city: string;
+  cityEn: string;
+  cityZh: string;
+  regionEn: string;
 }
+
+export type TestResult =
+  | { ok: true; info: { kind: 'mihomo'; version: string; conns: number; latencyMs: number } | { kind: 'openwrt'; host: string; count: number; max: number; wan: string[] } }
+  | { ok: false; error: Msg };
+
 
 export interface Frame {
   t: number;

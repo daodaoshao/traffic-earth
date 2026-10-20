@@ -41,8 +41,9 @@ export interface Point {
   lat: number;
   lon: number;
   cc: string;
-  country: string;
-  city: string;
+  cityEn: string;
+  cityZh: string;
+  regionEn: string;
 }
 
 /** One aggregated line of the live frame: traffic between one device and one destination. */
@@ -99,7 +100,8 @@ class DeviceDirectory {
   describe(key: string) {
     const m = this.manual.get(key);
     const a = this.auto.get(key);
-    const name = m?.name || a?.name || (key === 'router' ? '路由器' : '');
+    // The router has no name of its own; the browser labels key 'router' in its language.
+    const name = m?.name || a?.name || '';
     return { name, icon: m?.icon ?? '', ips: a?.ips ?? (key.includes(':') || key.includes('.') ? [key] : []) };
   }
 
@@ -167,7 +169,7 @@ class SourceRunner {
     let point = '';
     if (geo) {
       point = pointKey(geo.lat, geo.lon);
-      this.engine.points.set(point, { lat: geo.lat, lon: geo.lon, cc: geo.cc, country: geo.country, city: geo.city });
+      this.engine.points.set(point, { lat: geo.lat, lon: geo.lon, cc: geo.cc, cityEn: geo.cityEn, cityZh: geo.cityZh, regionEn: geo.regionEn });
     }
     return {
       start: c.start,
@@ -179,7 +181,7 @@ class SourceRunner {
       net: c.net,
       point,
       cc: geo?.cc ?? (priv ? 'lan' : ''),
-      city: geo?.city ?? '',
+      city: geo?.cityEn ?? '',
       asn: geo?.asn ?? 0,
       org: geo?.org ?? '',
       cat: c.inbound ? 'inbound' : classify({ host: c.host, port: c.rport, asn: geo?.asn ?? 0, private: priv }),

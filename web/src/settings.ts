@@ -1,5 +1,6 @@
-import { api, type SourceView } from './api';
-import { field, locationForm, mihomoForm, openwrtForm } from './forms';
+import { api, type SourceView, type TestResult } from './api';
+import { field, langSwitch, locationForm, mihomoForm, openwrtForm, testText } from './forms';
+import { lang, msgText, setLang, t } from './i18n';
 import { copyText, h, mount, msg } from './ui';
 
 interface SettingsView {
@@ -13,22 +14,15 @@ interface SettingsView {
   uninstallScript: string;
 }
 
-const sections: [string, string][] = [
-  ['sources', '数据源'],
-  ['location', '位置'],
-  ['devices', '设备'],
-  ['display', '显示'],
-  ['data', '数据'],
-  ['access', '访问'],
-];
+const sections = ['sources', 'location', 'devices', 'display', 'data', 'access'] as const;
 
 const statusText = (s: SourceView['status']) =>
-  s.state === 'ok' ? '● 正常' : s.state === 'connecting' ? '◌ 连接中' : s.state === 'disabled' ? '○ 已停用' : `✕ ${s.error}`;
+  s.state === 'ok' ? t('st.ok') : s.state === 'connecting' ? t('st.connecting') : s.state === 'disabled' ? t('st.disabled') : `✕ ${msgText(s.error)}`;
 const statusColor = (s: SourceView['status']) =>
   s.state === 'ok' ? 'var(--ok)' : s.state === 'error' ? 'var(--danger)' : 'var(--muted)';
 
 export async function showSettings(root: HTMLElement, section: string) {
-  if (!sections.some(([k]) => k === section)) section = 'sources';
+  if (!(sections as readonly string[]).includes(section)) section = 'sources';
   const body = h('div.card');
   mount(
     root,
@@ -41,21 +35,20 @@ export async function showSettings(root: HTMLElement, section: string) {
         h(
           'nav',
           null,
-          h('a.back', { href: '#/' }, '← 返回地球'),
-          sections.map(([k, label]) => h('a', { href: `#/settings/${k}`, class: k === section ? 'on' : '' }, label)),
+          h('a.back', { href: '#/' }, t('nav.backGlobe')),
+          sections.map((k) => h('a', { href: `#/settings/${k}`, class: k === section ? 'on' : '' }, t(`nav.${k}`))),
+          h('div.nav-lang', null, langSwitch()),
         ),
         body,
       ),
     ),
   );
   const s = await api<SettingsView>('/api/settings');
-  const render = { sources, location, devices, display, data, access }[section as 'sources']!;
+  const render = { sources, location, devices, display, data, access }[section as (typeof sections)[number]];
   await render(body, s);
 }
 
-async function reload() {
-  window.dispatchEvent(new HashChangeEvent('hashchange'));
-}
+const reload = () => window.dispatchEvent(new HashChangeEvent('hashchange'));
 
 function sources(body: HTMLElement, s: SettingsView) {
   const routers = s.sources.filter((x) => x.type === 'openwrt').map((x) => ({ id: x.id, name: x.name }));
@@ -63,24 +56,27 @@ function sources(body: HTMLElement, s: SettingsView) {
 
   const card = (src: SourceView) => {
     const res = h('div');
-    const test = h('button.btn.small', { type: 'button' }, '测试');
+    const test = h('button.btn.small', { type: 'button' }, t('common.test'));
     test.onclick = async () => {
-      mount(res, msg('info', '测试中…'));
-      const r = await api('/api/sources/test', { body: { type: src.type, url: src.url, id: src.id } }).catch((e) => ({ ok: false, error: e.message }));
-      mount(res, r.ok ? msg('ok', '✓ ' + r.summary) : msg('err', r.error));
+      mount(res, msg('info', t('common.testing')));
+      try {
+        mount(res, testText(await api<TestResult>('/api/sources/test', { body: { type: src.type, url: src.url, id: src.id } })));
+      } catch (e: any) {
+        mount(res, msg('err', e.message));
+      }
     };
-    const toggle = h('button.btn.small', { type: 'button' }, src.enabled ? '停用' : '启用');
+    const toggle = h('button.btn.small', { type: 'button' }, src.enabled ? t('common.disable') : t('common.enable'));
     toggle.onclick = async () => {
       await api(`/api/sources/${src.id}`, { method: 'PUT', body: { url: src.url, name: src.name, enabled: !src.enabled } });
       reload();
     };
-    const del = h('button.btn.small.danger', { type: 'button' }, '删除');
+    const del = h('button.btn.small.danger', { type: 'button' }, t('common.delete'));
     del.onclick = async () => {
-      if (!confirm(`删除数据源「${src.name}」？历史数据会保留。`)) return;
+      if (!confirm(t('src.deleteConfirm', { name: src.name }))) return;
       await api(`/api/sources/${src.id}`, { method: 'DELETE' });
       reload();
     };
-    const edit = h('button.btn.small', { type: 'button' }, '编辑');
+    const edit = h('button.btn.small', { type: 'button' }, t('common.edit'));
     edit.onclick = () => openEditor(src);
     const linked = src.linkTo ? s.sources.find((x) => x.id === src.linkTo) : null;
     return h(
@@ -91,31 +87,31 @@ function sources(body: HTMLElement, s: SettingsView) {
         null,
         h('b', null, src.name),
         h('span.tag', null, src.type === 'openwrt' ? 'OpenWrt' : 'mihomo'),
-        linked ? h('span.tag', null, `合并到 ${linked.name}`) : null,
-        h('span', { style: { color: statusColor(src.status), fontSize: '12px', flex: '1' } }, statusText(src.status)),
+        linked ? h('span.tag', null, t('src.mergedInto', { name: linked.name })) : null,
+        h('span.status', { style: { color: statusColor(src.status) } }, statusText(src.status)),
         test,
         edit,
         toggle,
         del,
       ),
-      h('div.muted.mono', { style: { fontSize: '12px', marginTop: '4px' } }, src.url, src.type === 'openwrt' ? `  ·  每 ${src.pollSec}s 轮询` : ''),
+      h('div.muted.mono.src-url', null, src.url, src.type === 'openwrt' ? `  ·  ${t('src.pollEvery', { n: src.pollSec })}` : ''),
       res,
     );
   };
 
   function openEditor(src: SourceView | null, type?: 'openwrt' | 'mihomo') {
-    const t = src?.type ?? type!;
+    const kind = src?.type ?? type!;
     const err = h('div');
-    const save = h('button.btn.primary', { type: 'button' }, '保存');
-    const cancel = h('button.btn', { type: 'button', onclick: () => mount(editor) }, '取消');
+    const save = h('button.btn.primary', { type: 'button' }, t('common.save'));
+    const cancel = h('button.btn', { type: 'button', onclick: () => mount(editor) }, t('common.cancel'));
     let get: () => any;
     let formEl: HTMLElement;
-    if (t === 'openwrt') {
+    if (kind === 'openwrt') {
       const f = openwrtForm({ name: src?.name, url: src?.url }, { requireCommand: !src });
       if (src) f.withExtra(() => (f.value.setupToken ? undefined : { id: src.id }));
       const poll = h('input', { type: 'number', min: '1', max: '30', value: String(src?.pollSec ?? 2) });
-      const wan = h('input', { type: 'text', value: (src?.wan ?? []).join(', '), placeholder: '留空自动识别，例如 pppoe-wan' });
-      formEl = h('div', null, f.el, h('div.row', null, field('轮询间隔（秒）', poll, '路由器忙时会自动放慢'), field('WAN 接口', wan, '用于总流量统计')));
+      const wan = h('input', { type: 'text', value: (src?.wan ?? []).join(', '), placeholder: t('ow.wanPh') });
+      formEl = h('div', null, f.el, h('div.row', null, field(t('ow.poll'), poll, t('ow.pollHint')), field(t('ow.wan'), wan, t('ow.wanHint'))));
       get = () => ({ ...f.value, pollSec: Number(poll.value), wan: wan.value.split(/[,\s]+/).filter(Boolean) });
       if (!src) save.dataset.needToken = '1';
     } else {
@@ -125,7 +121,7 @@ function sources(body: HTMLElement, s: SettingsView) {
     }
     save.onclick = async () => {
       const v = get();
-      if (save.dataset.needToken && !v.setupToken) return mount(err, msg('err', '请先生成配置命令并在路由器上执行'));
+      if (save.dataset.needToken && !v.setupToken) return mount(err, msg('err', t('setup.needCommand')));
       try {
         if (src) await api(`/api/sources/${src.id}`, { method: 'PUT', body: v });
         else await api('/api/sources', { body: v });
@@ -134,57 +130,63 @@ function sources(body: HTMLElement, s: SettingsView) {
         mount(err, msg('err', e.message));
       }
     };
-    mount(editor, h('div.src', null, h('h2', { style: { marginTop: '0' } }, src ? `编辑：${src.name}` : t === 'openwrt' ? '添加 OpenWrt 路由器' : '添加 mihomo'), formEl, err, h('div.actions', null, save, cancel)));
+    const title = src ? t('src.editTitle', { name: src.name }) : kind === 'openwrt' ? t('src.addOwTitle') : t('src.addMiTitle');
+    mount(editor, h('div.src', null, h('h2', { style: { marginTop: '0' } }, title), formEl, err, h('div.actions', null, save, cancel)));
     editor.scrollIntoView({ behavior: 'smooth' });
   }
 
-  const uninstall = h('button.btn.small', { type: 'button' }, '复制');
-  uninstall.onclick = () => copyText(s.uninstallScript).then(() => (uninstall.textContent = '已复制'));
+  const uninstall = h('button.btn.small', { type: 'button' }, t('common.copy'));
+  uninstall.onclick = () => copyText(s.uninstallScript).then(() => (uninstall.textContent = t('common.copied')));
 
   mount(
     body,
-    h('h1', null, '数据源'),
-    h('p', null, '从 OpenWrt 路由器读取连接，用 mihomo 补充域名和代理出口。'),
-    s.sources.length ? s.sources.map(card) : msg('info', '还没有数据源'),
+    h('h1', null, t('src.title')),
+    h('p', null, t('src.desc')),
+    s.sources.length ? s.sources.map(card) : msg('info', t('src.empty')),
     h(
       'div.actions',
       null,
-      h('button.btn', { type: 'button', onclick: () => openEditor(null, 'openwrt') }, '+ OpenWrt 路由器'),
-      h('button.btn', { type: 'button', onclick: () => openEditor(null, 'mihomo') }, '+ mihomo'),
+      h('button.btn', { type: 'button', onclick: () => openEditor(null, 'openwrt') }, t('src.addOw')),
+      h('button.btn', { type: 'button', onclick: () => openEditor(null, 'mihomo') }, t('src.addMi')),
     ),
     editor,
-    h('details', { style: { marginTop: '24px' } }, h('summary', null, '从路由器上移除流量地球的插件和账号'), h('pre.code', null, s.uninstallScript), uninstall),
+    h('details', { style: { marginTop: '24px' } }, h('summary', null, t('src.uninstall')), h('pre.code', null, s.uninstallScript), uninstall),
   );
 }
 
 function location(body: HTMLElement, s: SettingsView) {
   const f = locationForm(s.home);
   const res = h('div');
-  const save = h('button.btn.primary', { type: 'button' }, '保存');
+  const save = h('button.btn.primary', { type: 'button' }, t('common.save'));
   save.onclick = async () => {
-    if (!f.valid) return mount(res, msg('err', '请填写有效的经纬度'));
-    await api('/api/settings', { method: 'PUT', body: { home: f.value } });
-    mount(res, msg('ok', '已保存'));
+    if (!f.valid) return mount(res, msg('err', t('setup.badCoords')));
+    try {
+      await api('/api/settings', { method: 'PUT', body: { home: f.value } });
+      mount(res, msg('ok', t('common.saved')));
+    } catch (e: any) {
+      mount(res, msg('err', e.message));
+    }
   };
-  mount(body, h('h1', null, '位置'), h('p', null, '地球上所有飞线都从这里出发。'), f.el, res, h('div.actions', null, save));
+  mount(body, h('h1', null, t('loc.title')), h('p', null, t('loc.desc')), f.el, res, h('div.actions', null, save));
 }
 
 async function devices(body: HTMLElement) {
   const list = await api<Array<{ key: string; name: string; icon: string; ips: string[]; autoName: string; lastSeen: number }>>('/api/devices');
+  const timeFmt = (ts: number) => new Date(ts).toLocaleTimeString(lang === 'zh' ? 'zh-CN' : 'en-GB', { hour12: false });
   mount(
     body,
-    h('h1', null, '设备'),
-    h('p', null, '名称默认来自路由器的 DHCP 和主机名表，这里可以改成你认得出的名字。留空则恢复默认。'),
+    h('h1', null, t('dev.title')),
+    h('p', null, t('dev.desc')),
     list.length
       ? h(
           'table.t',
           null,
-          h('tr', null, h('th', null, '图标'), h('th', null, '名称'), h('th', null, '标识 / 地址'), h('th', null, '最近活动'), h('th')),
+          h('tr', null, h('th', null, t('dev.icon')), h('th', null, t('dev.name')), h('th', null, t('dev.id')), h('th', null, t('dev.lastSeen')), h('th')),
           list.map((d) => {
             const icon = h('input', { type: 'text', value: d.icon, placeholder: '💻', style: { width: '52px' } });
-            const name = h('input', { type: 'text', value: d.name !== d.autoName ? d.name : '', placeholder: d.autoName || '未命名' });
+            const name = h('input', { type: 'text', value: d.name !== d.autoName ? d.name : '', placeholder: d.autoName || t('hud.unknownDevice') });
             const ok = h('span.muted');
-            const save = h('button.btn.small', { type: 'button' }, '保存');
+            const save = h('button.btn.small', { type: 'button' }, t('common.save'));
             save.onclick = async () => {
               await api(`/api/devices/${encodeURIComponent(d.key)}`, { method: 'PUT', body: { name: name.value, icon: icon.value } });
               ok.textContent = ' ✓';
@@ -195,34 +197,44 @@ async function devices(body: HTMLElement) {
               h('td', null, icon),
               h('td', null, name),
               h('td.mono', { style: { fontSize: '11px' } }, d.key, h('br'), h('span.muted', null, d.ips.slice(0, 3).join(' '))),
-              h('td.muted', { style: { fontSize: '12px' } }, d.lastSeen ? new Date(d.lastSeen).toLocaleTimeString('zh-CN', { hour12: false }) : '—'),
+              h('td.muted', { style: { fontSize: '12px' } }, d.lastSeen ? timeFmt(d.lastSeen) : '—'),
               h('td', null, save, ok),
             );
           }),
         )
-      : msg('info', '还没有发现设备，等数据源连上后再来看'),
+      : msg('info', t('dev.empty')),
   );
 }
 
 function display(body: HTMLElement, s: SettingsView) {
+  const language = h(
+    'select',
+    null,
+    (['zh', 'en'] as const).map((l) => h('option', { value: l, selected: lang === l }, t(`lang.${l}`))),
+  );
+  language.onchange = () => setLang(language.value as 'zh' | 'en');
   const q = h(
     'select',
     null,
-    [
-      ['auto', '自动（帧率低时自动降档）'],
-      ['high', '高'],
-      ['medium', '中'],
-      ['low', '低（适合老设备、挂墙小屏）'],
-    ].map(([v, l]) => h('option', { value: v, selected: s.display.quality === v }, l)),
+    (['auto', 'high', 'medium', 'low'] as const).map((v) => h('option', { value: v, selected: s.display.quality === v }, t(`disp.q.${v}`))),
   );
   const rot = h('input', { type: 'number', step: '0.05', min: '0', max: '3', value: String(s.display.rotateSpeed) });
   const res = h('div');
-  const save = h('button.btn.primary', { type: 'button' }, '保存');
+  const save = h('button.btn.primary', { type: 'button' }, t('common.save'));
   save.onclick = async () => {
     await api('/api/settings', { method: 'PUT', body: { display: { quality: q.value, rotateSpeed: Number(rot.value) } } });
-    mount(res, msg('ok', '已保存，回到地球页面后生效'));
+    mount(res, msg('ok', t('disp.savedHint')));
   };
-  mount(body, h('h1', null, '显示'), h('p', null, '画面在浏览器里渲染，吃的是看的那台设备的显卡。'), field('画质', q), field('自转速度', rot, '0 为不转'), res, h('div.actions', null, save));
+  mount(
+    body,
+    h('h1', null, t('disp.title')),
+    field(t('lang.label'), language, t('disp.langHint')),
+    h('p', { style: { marginTop: '22px' } }, t('disp.desc')),
+    field(t('disp.quality'), q),
+    field(t('disp.rotate'), rot, t('disp.rotateHint')),
+    res,
+    h('div.actions', null, save),
+  );
 }
 
 function data(body: HTMLElement, s: SettingsView) {
@@ -232,37 +244,32 @@ function data(body: HTMLElement, s: SettingsView) {
   const fl = h('input', { type: 'number', min: '30', max: '3600', value: String(s.flushIntervalSec) });
   const au = h('input', { type: 'checkbox', checked: s.geoipAutoUpdate });
   const res = h('div');
-  const save = h('button.btn.primary', { type: 'button' }, '保存');
+  const save = h('button.btn.primary', { type: 'button' }, t('common.save'));
   save.onclick = async () => {
     await api('/api/settings', {
       method: 'PUT',
       body: { retention: { flowsDays: fd.value, minuteDays: md.value, hourDays: hd.value }, flushIntervalSec: fl.value, geoipAutoUpdate: au.checked },
     });
-    mount(res, msg('ok', '已保存'));
+    mount(res, msg('ok', t('common.saved')));
   };
-  const upd = h('button.btn.small', { type: 'button' }, '立即更新');
+  const upd = h('button.btn.small', { type: 'button' }, t('data.geoNow'));
   upd.onclick = async () => {
     await api('/api/geoip/update', { body: {} });
-    upd.textContent = '已开始，几分钟后刷新查看';
+    upd.textContent = t('data.geoStarted');
   };
   const geo = s.geo;
+  const stateKey = `data.geo.${geo.state}`;
   mount(
     body,
-    h('h1', null, '数据'),
-    h('h2', null, '保留时长（天）'),
-    h('div.row', null, field('连接明细', fd), field('分钟统计', md), field('小时统计', hd)),
-    field('写盘间隔（秒）', fl, '数据先在内存里攒着，定期批量写入，保护 SD 卡 / eMMC'),
-    h('h2', null, 'IP 地理库'),
-    h(
-      'p',
-      null,
-      `状态：${{ ready: '可用', downloading: '下载中', missing: '未下载', error: '出错' }[geo.state] ?? geo.state}`,
-      geo.builtAt ? `，版本 ${geo.builtAt.slice(0, 10)}` : '',
-      geo.error ? `（${geo.error}）` : '',
-    ),
-    h('label', { style: { display: 'flex', gap: '8px', alignItems: 'center' } }, au, '每月自动更新'),
+    h('h1', null, t('data.title')),
+    h('h2', null, t('data.retention')),
+    h('div.row', null, field(t('data.flows'), fd), field(t('data.minute'), md), field(t('data.hour'), hd)),
+    field(t('data.flush'), fl, t('data.flushHint')),
+    h('h2', null, t('data.geo')),
+    h('p', null, t('data.geoState', { state: t(stateKey) }), geo.builtAt ? t('data.geoVersion', { v: geo.builtAt.slice(0, 10) }) : ''),
+    h('label.check', null, au, t('data.geoAuto')),
     h('div.actions', null, upd),
-    h('small.muted', null, geo.attribution),
+    h('small.muted', null, t('hud.attribution')),
     res,
     h('div.actions', null, save),
   );
@@ -272,28 +279,27 @@ function access(body: HTMLElement) {
   const old = h('input', { type: 'password', autocomplete: 'current-password' });
   const pw = h('input', { type: 'password', autocomplete: 'new-password' });
   const res = h('div');
-  const save = h('button.btn.primary', { type: 'button' }, '修改密码');
+  const save = h('button.btn.primary', { type: 'button' }, t('acc.change'));
   save.onclick = async () => {
     try {
       await api('/api/password', { body: { old: old.value, password: pw.value } });
-      mount(res, msg('ok', '已修改，其他设备需要重新登录'));
+      mount(res, msg('ok', t('acc.changed')));
     } catch (e: any) {
       mount(res, msg('err', e.message));
     }
   };
-  const logout = h('button.btn.danger', { type: 'button' }, '退出登录');
+  const logout = h('button.btn.danger', { type: 'button' }, t('acc.logout'));
   logout.onclick = async () => {
     await api('/api/logout', { body: {} });
     window.location.hash = '#/login';
   };
   mount(
     body,
-    h('h1', null, '访问'),
-    h('h2', null, '管理员密码'),
-    h('div.row', null, field('原密码', old), field('新密码（至少 8 位）', pw)),
+    h('h1', null, t('acc.title')),
+    h('h2', null, t('acc.pw')),
+    h('div.row', null, field(t('acc.old'), old), field(t('acc.new'), pw)),
     res,
     h('div.actions', null, save, logout),
-    h('p', { style: { marginTop: '24px', fontSize: '12px' } }, '只读展示链接（给挂墙大屏用，免登录）将在下个版本提供。'),
+    h('p', { style: { marginTop: '24px', fontSize: '12px' } }, t('acc.kiosk')),
   );
 }
-
