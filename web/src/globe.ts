@@ -2,6 +2,7 @@ import Globe, { type GlobeInstance } from 'globe.gl';
 import { api, type Category, type Frame, type Meta, type Point } from './api';
 import { cities } from './cities';
 import { anonDevice, demo } from './demo';
+import { applyGlobeStyle, pickStyle } from './globe-styles';
 import { catName, lang, msgText, placeName, setLang, t } from './i18n';
 import { zhOrg } from './places-zh';
 import { bytes, flag, fmtBytes, fmtRate, h, rate } from './ui';
@@ -330,14 +331,6 @@ export async function showGlobe(root: HTMLElement) {
   let quality: Quality = meta.display.quality === 'auto' ? 'high' : meta.display.quality;
   const globe: GlobeInstance = new Globe(stage, { rendererConfig: { antialias: true, alpha: true, powerPreference: 'high-performance' } })
     .backgroundColor('rgba(0,0,0,0)')
-    .globeImageUrl('/img/earth-night.jpg')
-    .showAtmosphere(true)
-    .atmosphereColor('#2ee6ff')
-    .atmosphereAltitude(0.22)
-    .hexPolygonResolution(3)
-    .hexPolygonMargin(0.42)
-    .hexPolygonUseDots(true)
-    .hexPolygonColor(() => 'rgba(64, 200, 255, 0.55)')
     .arcsTransitionDuration(0)
     .arcColor('color')
     .arcStroke('stroke')
@@ -360,14 +353,16 @@ export async function showGlobe(root: HTMLElement) {
   // Presentation mode lets a recording script direct the camera.
   if (demo.on) (window as any).__globe = globe;
 
-  const mat = globe.globeMaterial() as any;
-  mat.color?.set?.('#7fa8d8');
-  mat.emissive?.set?.('#03101e');
-  mat.shininess = 6;
-
+  // ?style=… previews a look without changing the saved one.
+  const style = pickStyle(meta.display.globeStyle);
+  let countries: object[] = [];
+  applyGlobeStyle(globe, style, countries, quality === 'low');
   fetch('/data/countries.geojson')
     .then((r) => r.json())
-    .then((g) => globe.hexPolygonsData(g.features));
+    .then((g) => {
+      countries = g.features;
+      applyGlobeStyle(globe, style, countries, quality === 'low');
+    });
 
   const controls = globe.controls() as any;
   controls.autoRotate = meta.display.rotateSpeed > 0;
@@ -464,8 +459,7 @@ export async function showGlobe(root: HTMLElement) {
     quality = q;
     const dpr = window.devicePixelRatio || 1;
     globe.renderer().setPixelRatio(q === 'high' ? Math.min(dpr, 2) : q === 'medium' ? Math.min(dpr, 1.25) : 1);
-    globe.showAtmosphere(q !== 'low');
-    globe.globeImageUrl(q === 'low' ? '/img/earth-dark.jpg' : '/img/earth-night.jpg');
+    applyGlobeStyle(globe, style, countries, q === 'low');
     document.body.classList.toggle('q-low', q === 'low');
     document.body.dataset.quality = q;
     setText(qualityTag, '  ·  ' + t('hud.quality', { q: t(`hud.q.${q}`) }) + (meta.display.quality === 'auto' ? t('hud.qualityAuto') : ''));

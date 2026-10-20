@@ -28,7 +28,7 @@ export interface Settings {
   retention: { flowsDays: number; minuteDays: number; hourDays: number };
   flushIntervalSec: number;
   geoipAutoUpdate: boolean;
-  display: { quality: 'auto' | 'high' | 'medium' | 'low'; rotateSpeed: number };
+  display: { quality: 'auto' | 'high' | 'medium' | 'low'; rotateSpeed: number; globeStyle: string };
 }
 
 const defaults: Settings = {
@@ -40,7 +40,7 @@ const defaults: Settings = {
   // Writes are batched: SD cards and eMMC are the usual home for this.
   flushIntervalSec: 300,
   geoipAutoUpdate: true,
-  display: { quality: 'auto', rotateSpeed: 0.35 },
+  display: { quality: 'auto', rotateSpeed: 0.35, globeStyle: 'dots' },
 };
 
 const getStmt = db.prepare('SELECT value FROM settings WHERE key = ?');

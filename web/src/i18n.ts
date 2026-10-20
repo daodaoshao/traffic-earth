@@ -197,6 +197,9 @@ const zh: Dict = {
 
   'disp.title': '显示',
   'disp.desc': '画面在浏览器里渲染，用的是正在观看的这台设备的显卡。',
+  'disp.style': '地球风格',
+  'disp.styleHint': '在网址后加 ?style=hologram 可以临时预览某种风格，不改设置',
+  'style.dots': '点阵', 'style.hologram': '全息线框', 'style.realistic': '真实地球', 'style.stars': '星点', 'style.neon': '霓虹板块',
   'disp.quality': '画质',
   'disp.q.auto': '自动（帧率低时自动降档）',
   'disp.q.high': '高',
@@ -426,6 +429,9 @@ const en: Dict = {
 
   'disp.title': 'Display',
   'disp.desc': 'The globe is rendered in the browser, on the graphics of the device you are watching on.',
+  'disp.style': 'Globe style',
+  'disp.styleHint': 'Add ?style=hologram to the address to preview a style without saving it',
+  'style.dots': 'Dot matrix', 'style.hologram': 'Hologram', 'style.realistic': 'Realistic', 'style.stars': 'Starfield', 'style.neon': 'Neon plates',
   'disp.quality': 'Quality',
   'disp.q.auto': 'Auto (steps down when the frame rate drops)',
   'disp.q.high': 'High',

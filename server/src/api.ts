@@ -136,6 +136,7 @@ export function registerApi(app: FastifyInstance) {
       settings.set('display', {
         quality: ['auto', 'high', 'medium', 'low'].includes(b.display.quality) ? b.display.quality : d.quality,
         rotateSpeed: Math.min(3, Math.max(0, Number(b.display.rotateSpeed ?? d.rotateSpeed))),
+        globeStyle: ['dots', 'hologram', 'realistic', 'stars', 'neon'].includes(b.display.globeStyle) ? b.display.globeStyle : d.globeStyle,
       });
     }
     audit('settings', Object.keys(b).join(','));

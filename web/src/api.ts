@@ -34,7 +34,7 @@ export interface Category {
 export interface Meta {
   categories: Category[];
   home: { lat: number; lon: number; name: string } | null;
-  display: { quality: 'auto' | 'high' | 'medium' | 'low'; rotateSpeed: number };
+  display: { quality: 'auto' | 'high' | 'medium' | 'low'; rotateSpeed: number; globeStyle?: string };
   geo: { state: string; error?: string; attribution: string };
 }
 

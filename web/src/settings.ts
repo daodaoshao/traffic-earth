@@ -2,6 +2,7 @@ import { api, type SourceView, type TestResult } from './api';
 import { field, langSwitch, locationForm, mihomoForm, openwrtForm, testText } from './forms';
 import { lang, msgText, setLang, t } from './i18n';
 import { copyText, h, mount, msg } from './ui';
+import { GLOBE_STYLES } from './globe-styles';
 
 interface SettingsView {
   sources: SourceView[];
@@ -9,7 +10,7 @@ interface SettingsView {
   retention: { flowsDays: number; minuteDays: number; hourDays: number };
   flushIntervalSec: number;
   geoipAutoUpdate: boolean;
-  display: { quality: string; rotateSpeed: number };
+  display: { quality: string; rotateSpeed: number; globeStyle?: string };
   geo: { state: string; error?: string; builtAt?: string; attribution: string };
   uninstallScript: string;
 }
@@ -219,10 +220,15 @@ function display(body: HTMLElement, s: SettingsView) {
     (['auto', 'high', 'medium', 'low'] as const).map((v) => h('option', { value: v, selected: s.display.quality === v }, t(`disp.q.${v}`))),
   );
   const rot = h('input', { type: 'number', step: '0.05', min: '0', max: '3', value: String(s.display.rotateSpeed) });
+  const gs = h(
+    'select',
+    null,
+    GLOBE_STYLES.map((v) => h('option', { value: v, selected: (s.display.globeStyle ?? 'dots') === v }, t(`style.${v}`))),
+  );
   const res = h('div');
   const save = h('button.btn.primary', { type: 'button' }, t('common.save'));
   save.onclick = async () => {
-    await api('/api/settings', { method: 'PUT', body: { display: { quality: q.value, rotateSpeed: Number(rot.value) } } });
+    await api('/api/settings', { method: 'PUT', body: { display: { quality: q.value, rotateSpeed: Number(rot.value), globeStyle: gs.value } } });
     mount(res, msg('ok', t('disp.savedHint')));
   };
   mount(
@@ -230,6 +236,7 @@ function display(body: HTMLElement, s: SettingsView) {
     h('h1', null, t('disp.title')),
     field(t('lang.label'), language, t('disp.langHint')),
     h('p', { style: { marginTop: '22px' } }, t('disp.desc')),
+    field(t('disp.style'), gs, t('disp.styleHint')),
     field(t('disp.quality'), q),
     field(t('disp.rotate'), rot, t('disp.rotateHint')),
     res,
