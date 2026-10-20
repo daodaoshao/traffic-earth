@@ -4,7 +4,7 @@ import { cities } from './cities';
 import { anonDevice, demo } from './demo';
 import { catName, lang, msgText, placeName, setLang, t } from './i18n';
 import { zhOrg } from './places-zh';
-import { bytes, flag, fmtRate, h, rate } from './ui';
+import { bytes, flag, fmtBytes, fmtRate, h, rate } from './ui';
 
 type Quality = 'high' | 'medium' | 'low';
 
@@ -141,7 +141,6 @@ export async function showGlobe(root: HTMLElement) {
   const clock = h('span.chip.mono');
   const srcChips = h('span.src-chips');
   const filterChip = h('span.chip.filter.hidden', { title: t('hud.clearFilter') });
-  const todayChip = h('span.chip.mono');
   const langBtn = h('button.icon-btn', { type: 'button', title: t('lang.label') }, lang === 'zh' ? 'EN' : '中');
   langBtn.onclick = () => setLang(lang === 'zh' ? 'en' : 'zh');
   const banner = h('div.banner.hidden');
@@ -153,7 +152,11 @@ export async function showGlobe(root: HTMLElement) {
   const vUpU = h('span.u', null, 'bps');
   const spark = h('canvas.spark');
   const kvConns = h('b.mono', null, '0');
-  const kvToday = h('b.mono', null, '—');
+  // Today's totals live in their own panel; the throughput panel is strictly live.
+  const tdDown = h('span.v', null, '0');
+  const tdDownU = h('span.u', null, 'B');
+  const tdUp = h('span.v', null, '0');
+  const tdUpU = h('span.u', null, 'B');
 
   const ns = 'http://www.w3.org/2000/svg';
   const svg = <K extends keyof SVGElementTagNameMap>(tag: K, attrs: Record<string, string | number>) => {
@@ -269,7 +272,6 @@ export async function showGlobe(root: HTMLElement) {
       srcChips,
       filterChip,
       h('span.spacer'),
-      todayChip,
       langBtn,
       h('a.icon-btn', { href: '#/settings/sources' }, `⚙ ${t('hud.settings')}`),
     ),
@@ -288,7 +290,17 @@ export async function showGlobe(root: HTMLElement) {
       ),
       spark,
       h('div.kv', null, h('span', null, t('hud.conns')), kvConns),
-      h('div.kv', null, h('span', null, t('hud.todayInOut')), kvToday),
+    ),
+    h(
+      'section.panel.p-today',
+      null,
+      h('h3', null, t('hud.todayTotal')),
+      h(
+        'div.big',
+        null,
+        h('div.down', null, h('div.lbl', null, t('hud.todayDown')), h('div', null, tdDown, tdDownU)),
+        h('div.up', null, h('div.lbl', null, t('hud.todayUp')), h('div', null, tdUp, tdUpU)),
+      ),
     ),
     h('section.panel.p-dev', null, h('h3', null, t('hud.devices')), devList),
     h(
@@ -344,6 +356,9 @@ export async function showGlobe(root: HTMLElement) {
     .ringMaxRadius('max')
     .ringPropagationSpeed('speed')
     .ringRepeatPeriod('period');
+
+  // Presentation mode lets a recording script direct the camera.
+  if (demo.on) (window as any).__globe = globe;
 
   const mat = globe.globeMaterial() as any;
   mat.color?.set?.('#7fa8d8');
@@ -728,6 +743,7 @@ export async function showGlobe(root: HTMLElement) {
       const k = dOrder[i];
       r.row.classList.toggle('empty', !k);
       r.key = k ?? '';
+      r.row.dataset.key = r.key;
       if (!k) return;
       const v = sDev.get(k);
       const td = f.today.devs[k];
@@ -742,8 +758,12 @@ export async function showGlobe(root: HTMLElement) {
     const conns = filter ? f.rows.filter((r) => r.d === filter).reduce((s, r) => s + r.n, 0) : f.total.conns;
     setText(kvConns, String(conns));
     const td = filter ? (f.today.devs[filter] ?? [0, 0]) : [f.today.up, f.today.down];
-    setText(kvToday, `${bytes(td[1])} / ${bytes(td[0])}`);
-    setText(todayChip, t('hud.today', { down: bytes(f.today.down), up: bytes(f.today.up) }));
+    const [dv, du] = fmtBytes(td[1]);
+    const [uv, uu] = fmtBytes(td[0]);
+    setText(tdDown, dv);
+    setText(tdDownU, du);
+    setText(tdUp, uv);
+    setText(tdUpU, uu);
     const srcSig = f.sources.map((s) => s.id + s.status.state).join();
     if (srcChips.dataset.sig !== srcSig) {
       srcChips.dataset.sig = srcSig;

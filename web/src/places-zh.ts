@@ -150,7 +150,7 @@ const moreRegions: Record<string, string> = {
 Object.assign(regions, moreRegions);
 
 /** "Shibuya City", "Hangzhou (Xihu Qu)" -> "Shibuya", "Hangzhou" */
-const clean = (s: string) => s.replace(/\s*\(.*?\)\s*/g, '').replace(/\s+(City|Shi|Qu|District)$/i, '').trim();
+export const clean = (s: string) => s.replace(/\s*\(.*?\)\s*/g, '').replace(/\s+(City|Shi|Qu|District)$/i, '').trim();
 
 export const zhCity = (en: string) => cities[en] ?? cities[clean(en)];
 export const zhRegion = (en: string) => regions[en] ?? regions[clean(en)];

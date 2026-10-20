@@ -62,8 +62,9 @@ const zh: Dict = {
   'hud.in': '↓ 流入',
   'hud.out': '↑ 流出',
   'hud.conns': '活动连接',
-  'hud.todayInOut': '今日 ↓ / ↑',
-  'hud.today': '今日 ↓ {down}  ↑ {up}',
+  'hud.todayTotal': '今日总量',
+  'hud.todayDown': '↓ 下载',
+  'hud.todayUp': '↑ 上传',
   'hud.categories': '流量分类',
   'hud.now': '实时',
   'hud.todayTab': '今日',
@@ -290,8 +291,9 @@ const en: Dict = {
   'hud.in': '↓ In',
   'hud.out': '↑ Out',
   'hud.conns': 'Active connections',
-  'hud.todayInOut': 'Today ↓ / ↑',
-  'hud.today': 'Today ↓ {down}  ↑ {up}',
+  'hud.todayTotal': 'Today',
+  'hud.todayDown': '↓ Downloaded',
+  'hud.todayUp': '↑ Uploaded',
   'hud.categories': 'Categories',
   'hud.now': 'Live',
   'hud.todayTab': 'Today',
@@ -537,7 +539,8 @@ export function placeName(p: { cc: string; cityEn: string; cityZh: string; regio
     // "中国 · 北京" reads oddly when city and region names coincide with the country.
     if (local === country) local = '';
   } else {
-    local = p.cityEn || p.regionEn || '';
+    // "Frankfurt am Main (Innenstadt I)" -> "Frankfurt am Main"
+    local = (p.cityEn && p.cityEn.replace(/\s*\(.*?\)\s*/g, '').trim()) || p.regionEn || '';
   }
   if (short) return local || country || t('hud.unknownPlace');
   return [country, local].filter(Boolean).join(' · ') || t('hud.unknownPlace');

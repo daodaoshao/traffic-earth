@@ -74,6 +74,9 @@ body.q-low .scanlines, body.q-low .vignette { display: none; }
 .col-left { grid-column: 1; grid-row: 2; display: flex; flex-direction: column; gap: 14px; min-height: 0; pointer-events: none; }
 .col-left > * { pointer-events: auto; }
 .p-rate { flex: none; }
+.p-today { flex: none; }
+.p-today .big .v { font-size: 24px; }
+.p-today .up .v { font-size: 24px; }
 .p-dev { flex: none; }
 .p-cats { flex: 1 1 0; min-height: 250px; }
 .p-top { grid-column: 3; grid-row: 2; }
@@ -98,7 +101,7 @@ body.q-low .scanlines, body.q-low .vignette { display: none; }
 .legend { flex: 1; min-width: 0; font-size: 12px; }
 .legend-note { height: 16px; font-size: 11px; }
 .legend .slot, .legend-head { display: flex; align-items: center; gap: 6px; height: 20px; transition: opacity .4s; }
-.legend-head { height: 16px; font-size: 10px; color: var(--muted); letter-spacing: 1px; }
+.legend-head { height: 16px; font-size: 9px; color: var(--muted); letter-spacing: 0; white-space: nowrap; }
 .legend-head span { flex: 1; }
 .legend .slot em, .legend-head em { width: 30px; text-align: right; flex: none; }
 .legend .slot em:first-of-type { color: var(--accent); }
