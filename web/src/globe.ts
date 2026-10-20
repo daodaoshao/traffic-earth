@@ -13,7 +13,7 @@ const RESORT_MS = 3000;
 const EMA = 0.45;
 const HISTORY_SEC = 90;
 const LEGEND_SLOTS = 8;
-const TOP_SLOTS = 14;
+const TOP_SLOTS = 12;
 const DEV_SLOTS = 14;
 const MAX_ARCS = 90;
 
@@ -159,14 +159,58 @@ export async function showGlobe(root: HTMLElement) {
       const row = h('div.item.slot', { class: clickable ? 'click' : '' }, h('div.name', null, name, sub), val, h('div.bar', null, bar));
       return { row, name, sub, val, bar, key: '' };
     });
-  const topRows = mkRows(TOP_SLOTS, false);
   const devRows = mkRows(DEV_SLOTS, true);
-  const topEmpty = h('div.empty', null, t('hud.noTraffic'));
-  const topList = h('div.list', null, topRows.map((r) => r.row), topEmpty);
+  type TopMeta = { name: string; sub: string; org: string; cc: string; color: string; up: number; down: number };
+  /** A ranked list with fixed slots, smoothed values and a slowly changing order. */
+  const rankList = (slots: number) => {
+    const rows = mkRows(slots, false);
+    const empty = h('div.empty', null, t('hud.noTraffic'));
+    const el = h('div.list', null, rows.map((r) => r.row), empty);
+    const sm = new Smooth();
+    const ord = new StableOrder();
+    const meta = new Map<string, TopMeta>();
+    return {
+      el,
+      reset() {
+        sm.v.clear();
+      },
+      feed(next: Map<string, TopMeta>) {
+        sm.update(new Map([...next].map(([k, v]) => [k, v.up + v.down])));
+        for (const [k, v] of next) meta.set(k, v);
+        for (const k of meta.keys()) if (!sm.v.has(k)) meta.delete(k);
+      },
+      render(force: boolean) {
+        const order = ord.pick(sm.v, slots, force);
+        const max = Math.max(1, ...order.map((k) => sm.get(k)));
+        rows.forEach((r, i) => {
+          const k = order[i];
+          const m = k ? meta.get(k) : undefined;
+          r.row.classList.toggle('empty', !m);
+          if (!m) {
+            r.key = '';
+            return;
+          }
+          const v = sm.get(k);
+          if (r.key !== k) {
+            r.key = k;
+            setText(r.name, `${flag(m.cc)} ${m.name}`);
+            r.bar.style.background = m.color;
+            r.bar.style.boxShadow = `0 0 6px ${m.color}`;
+          }
+          setText(r.sub, m.sub);
+          setText(r.val, rate(v));
+          r.bar.style.width = `${(v / max) * 100}%`;
+          r.row.title = [m.org, `↓ ${rate(m.down)}  ↑ ${rate(m.up)}`].filter(Boolean).join('\n');
+        });
+        empty.classList.toggle('hidden', order.length > 0);
+      },
+    };
+  };
+  const hostList = rankList(TOP_SLOTS);
+  const regionList = rankList(TOP_SLOTS);
   const devList = h('div.list', null, devRows.map((r) => r.row));
 
   let catMode: 'now' | 'today' = 'now';
-  let topMode: 'host' | 'region' = 'host';
   let filter: string | null = null;
 
   const tabs = (opts: [string, string][], get: () => string, set: (v: string) => void, reset: () => void) => {
@@ -200,6 +244,9 @@ export async function showGlobe(root: HTMLElement) {
       h('a.icon-btn', { href: '#/settings/sources' }, `⚙ ${t('hud.settings')}`),
     ),
     h(
+      'div.col-left',
+      null,
+    h(
       'section.panel.p-rate',
       null,
       h('h3', null, t('hud.throughput')),
@@ -213,6 +260,7 @@ export async function showGlobe(root: HTMLElement) {
       h('div.kv', null, h('span', null, t('hud.conns')), kvConns),
       h('div.kv', null, h('span', null, t('hud.todayInOut')), kvToday),
     ),
+    h('section.panel.p-dev', null, h('h3', null, t('hud.devices')), devList),
     h(
       'section.panel.p-cats',
       null,
@@ -224,22 +272,16 @@ export async function showGlobe(root: HTMLElement) {
       ),
       h('div.donut-wrap', null, donut, legend),
     ),
+    ),
     h(
       'section.panel.p-top',
       null,
-      h(
-        'h3',
-        null,
-        t('hud.top'),
-        tabs([['host', t('hud.byTarget')], ['region', t('hud.byRegion')]], () => topMode, (v) => (topMode = v as any), () => {
-          sTop.v.clear();
-          topMeta.clear();
-          topRows.forEach((r) => (r.key = ''));
-        }),
-      ),
-      topList,
+      h('h3', null, t('hud.top')),
+      h('h4.sub-head', null, t('hud.byTarget')),
+      hostList.el,
+      h('h4.sub-head', null, t('hud.byRegion')),
+      regionList.el,
     ),
-    h('section.panel.p-dev', null, h('h3', null, t('hud.devices')), devList),
     h('div.footer', null, t('hud.attribution')),
   );
   root.replaceChildren(stage, h('div.scanlines'), h('div.vignette'), hud, banner);
@@ -346,16 +388,12 @@ export async function showGlobe(root: HTMLElement) {
   // ---------- data state ----------
   let frame: Frame | null = null;
   const sCat = new Smooth();
-  const sTop = new Smooth();
   const sDev = new Smooth();
   const oCat = new StableOrder();
-  const oTop = new StableOrder();
   const oDev = new StableOrder();
   const hist: { t: number; up: number; down: number }[] = [];
   const shown = { up: 0, down: 0 };
   const target = { up: 0, down: 0 };
-  type TopMeta = { name: string; sub: string; org: string; cc: string; color: string; up: number; down: number };
-  const topMeta = new Map<string, TopMeta>();
 
   const devName = (k: string) => {
     const d = frame?.devices[k];
@@ -367,7 +405,8 @@ export async function showGlobe(root: HTMLElement) {
     filter = k;
     hist.length = 0;
     sCat.v.clear();
-    sTop.v.clear();
+    hostList.reset();
+    regionList.reset();
     filterChip.classList.toggle('hidden', !filter);
     if (filter) filterChip.textContent = `◎ ${t('hud.onlyDevice', { name: devName(filter) })}  ✕`;
     onFrame(true);
@@ -381,7 +420,8 @@ export async function showGlobe(root: HTMLElement) {
 
     const byPoint = new Map<string, Agg>();
     const byCat = new Map<string, number>();
-    const tops = new Map<string, TopMeta>();
+    const hosts = new Map<string, TopMeta>();
+    const regions = new Map<string, TopMeta>();
     let up = 0;
     let down = 0;
     for (const r of rows) {
@@ -390,28 +430,34 @@ export async function showGlobe(root: HTMLElement) {
       const tt = r.u + r.w;
       byCat.set(r.c, (byCat.get(r.c) ?? 0) + tt);
       const pt: Point | undefined = r.p ? f.points[r.p] : undefined;
-      // Regions group by what is displayed, so two spellings of one city merge.
-      const key = topMode === 'host' ? `${r.h}|${r.i}` : placeName(pt);
-      let e = tops.get(key);
+      const hk = `${r.h}|${r.i}`;
+      let e = hosts.get(hk);
       if (!e) {
-        e =
-          topMode === 'host'
-            ? {
-                name: r.h,
-                // The subtitle is always a place in the viewer's language; operator names are
-                // data in English, so they only appear in the tooltip (translated or omitted in Chinese).
-                sub: r.i ? `${t('hud.inbound')} · ${placeName(pt, true)}` : placeName(pt),
-                org: r.o ? (lang === 'zh' ? (zhOrg(r.o) ?? '') : r.o) : '',
-                cc: pt?.cc ?? '',
-                color: catColor(r.i ? 'inbound' : r.c),
-                up: 0,
-                down: 0,
-              }
-            : { name: placeName(pt), sub: '', org: '', cc: pt?.cc ?? '', color: '#2ee6ff', up: 0, down: 0 };
-        tops.set(key, e);
+        e = {
+          name: r.h,
+          // The subtitle is always a place in the viewer's language; operator names are
+          // data in English, so they only appear in the tooltip (translated or omitted in Chinese).
+          sub: r.i ? `${t('hud.inbound')} · ${placeName(pt, true)}` : placeName(pt),
+          org: r.o ? (lang === 'zh' ? (zhOrg(r.o) ?? '') : r.o) : '',
+          cc: pt?.cc ?? '',
+          color: catColor(r.i ? 'inbound' : r.c),
+          up: 0,
+          down: 0,
+        };
+        hosts.set(hk, e);
       }
       e.up += r.u;
       e.down += r.w;
+      // Regions group by what is displayed, so two spellings of one city merge.
+      const rk = placeName(pt);
+      let g = regions.get(rk);
+      if (!g) {
+        g = { name: rk, sub: '', org: '', cc: pt?.cc ?? '', color: '#2ee6ff', up: 0, down: 0 };
+        regions.set(rk, g);
+      }
+      g.up += r.u;
+      g.down += r.w;
+      g.sub = '';
       if (!r.p || !pt) continue;
       const a = byPoint.get(r.p) ?? { up: 0, down: 0, n: 0, cats: new Map(), hosts: new Map(), inbound: 0 };
       a.up += r.u;
@@ -433,9 +479,8 @@ export async function showGlobe(root: HTMLElement) {
     while (hist.length && now - hist[0].t > (HISTORY_SEC + 2) * 1000) hist.shift();
 
     sCat.update(byCat);
-    sTop.update(new Map([...tops].map(([k, v]) => [k, v.up + v.down])));
-    for (const [k, v] of tops) topMeta.set(k, v);
-    for (const k of topMeta.keys()) if (!sTop.v.has(k)) topMeta.delete(k);
+    hostList.feed(hosts);
+    regionList.feed(regions);
     const devRates = new Map<string, number>();
     for (const r of f.rows) devRates.set(r.d, (devRates.get(r.d) ?? 0) + r.u + r.w);
     for (const k of Object.keys(f.today.devs)) if (!devRates.has(k)) devRates.set(k, 0);
@@ -570,30 +615,9 @@ export async function showGlobe(root: HTMLElement) {
       setText(r.pct, k && total > 0 ? `${Math.round(((catScore.get(k) ?? 0) / total) * 100)}%` : '');
     });
 
-    // Top destinations.
-    const tOrder = oTop.pick(sTop.v, TOP_SLOTS, force);
-    const tMax = Math.max(1, ...tOrder.map((k) => sTop.get(k)));
-    topRows.forEach((r, i) => {
-      const k = tOrder[i];
-      const m = k ? topMeta.get(k) : undefined;
-      r.row.classList.toggle('empty', !m);
-      if (!m) {
-        r.key = '';
-        return;
-      }
-      const v = sTop.get(k);
-      if (r.key !== k) {
-        r.key = k;
-        setText(r.name, `${flag(m.cc)} ${m.name}`);
-        r.bar.style.background = m.color;
-        r.bar.style.boxShadow = `0 0 6px ${m.color}`;
-      }
-      setText(r.sub, m.sub);
-      setText(r.val, rate(v));
-      r.bar.style.width = `${(v / tMax) * 100}%`;
-      r.row.title = [m.org, `↓ ${rate(m.down)}  ↑ ${rate(m.up)}`].filter(Boolean).join('\n');
-    });
-    topEmpty.classList.toggle('hidden', tOrder.length > 0);
+    // Top destinations, by host and by region.
+    hostList.render(force);
+    regionList.render(force);
 
     // Devices (never filtered: this is where the filter is chosen).
     const dScore = new Map<string, number>();

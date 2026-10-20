@@ -39,7 +39,7 @@ body.q-low .scanlines, body.q-low .vignette { display: none; }
 
 .hud { position: fixed; inset: 0; z-index: 2; pointer-events: none; display: grid;
   grid-template-columns: minmax(260px, 320px) 1fr minmax(280px, 340px);
-  grid-template-rows: auto minmax(0, 1fr) minmax(0, 1fr) auto; gap: 14px; padding: 14px 18px; }
+  grid-template-rows: auto minmax(0, 1fr) auto; gap: 14px; padding: 14px 18px; }
 .hud > * { pointer-events: auto; }
 
 .topbar { grid-column: 1 / -1; display: flex; align-items: center; gap: 18px; padding: 4px 4px 0; }
@@ -71,11 +71,16 @@ body.q-low .scanlines, body.q-low .vignette { display: none; }
 .tabs button.on { color: var(--accent); border-color: var(--line-strong); }
 .scroll { overflow-y: auto; min-height: 0; scrollbar-width: thin; scrollbar-color: var(--line) transparent; }
 
-.p-rate { grid-column: 1; grid-row: 2; }
-.p-cats { grid-column: 1; grid-row: 3; }
+.col-left { grid-column: 1; grid-row: 2; display: flex; flex-direction: column; gap: 14px; min-height: 0; pointer-events: none; }
+.col-left > * { pointer-events: auto; }
+.p-rate { flex: none; }
+.p-dev { flex: 1 1 0; min-height: 120px; }
+.p-cats { flex: none; height: 232px; }
 .p-top { grid-column: 3; grid-row: 2; }
-.p-dev { grid-column: 3; grid-row: 3; }
-.footer { grid-column: 1; grid-row: 4; align-self: end; font: 10px var(--mono); color: var(--muted); opacity: 0.7; }
+.p-top .list { flex: 1 1 0; }
+.sub-head { margin: 4px 0 2px; font: 600 11px var(--sans); letter-spacing: 2px; color: var(--muted); }
+.sub-head + .list + .sub-head { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--line); }
+.footer { grid-column: 1; grid-row: 3; align-self: end; font: 10px var(--mono); color: var(--muted); opacity: 0.7; }
 
 .big { display: flex; gap: 18px; align-items: flex-end; }
 .big .v { font: 600 30px/1 var(--mono); font-variant-numeric: tabular-nums; display: inline-block; min-width: 3.2ch; text-align: right; }
@@ -115,7 +120,8 @@ body.q-low .scanlines, body.q-low .vignette { display: none; }
 .tooltip { position: fixed; z-index: 5; pointer-events: none; background: var(--panel-solid); border: 1px solid var(--line-strong); padding: 8px 10px; border-radius: 4px; font-size: 12px; max-width: 320px; box-shadow: 0 0 24px rgba(46,230,255,0.15); }
 .tooltip b { color: var(--accent); }
 .label-layer { position: absolute; inset: 0; pointer-events: none; overflow: hidden; }
-.globe-label { position: absolute; left: 0; top: 0; will-change: transform; transition: opacity .3s; font: 11px var(--mono); color: #eaf8ff; text-shadow: 0 0 6px #000, 0 0 10px rgba(46,230,255,0.8); white-space: nowrap; pointer-events: none; }
+/* Starts invisible; placeLabels() fades it in once it has a position. */
+.globe-label { position: absolute; left: 0; top: 0; opacity: 0; will-change: transform; transition: opacity .3s; font: 11px var(--mono); color: #eaf8ff; text-shadow: 0 0 6px #000, 0 0 10px rgba(46,230,255,0.8); white-space: nowrap; pointer-events: none; }
 .globe-label.home { color: var(--accent); font-weight: 600; }
 
 .banner { position: fixed; z-index: 4; left: 50%; top: 64px; transform: translateX(-50%); background: rgba(40, 10, 20, 0.85); border: 1px solid var(--danger); color: #ffd6de; padding: 8px 14px; border-radius: 4px; font-size: 13px; }
@@ -127,6 +133,9 @@ body.q-low .scanlines, body.q-low .vignette { display: none; }
   .topbar { position: fixed; top: 0; left: 0; right: 0; padding: 10px 12px; flex-wrap: wrap; gap: 8px; z-index: 3; }
   .brand b { font-size: 16px; letter-spacing: 4px; }
   .panel { max-height: none; }
+  .col-left { gap: 10px; }
+  .p-dev, .p-top .list { flex: none; }
+  .p-dev { min-height: 0; }
   .scanlines { display: none; }
 }
 
