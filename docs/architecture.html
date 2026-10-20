@@ -1,0 +1,440 @@
+<title>流量地球架构设计</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;700&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Layout: a single reading column with a sticky table of contents on wide screens; diagrams and tables scroll inside their own boxes. */
+:root {
+  --bg: #f6f9fc;
+  --surface: #ffffff;
+  --fg: #12202e;
+  --muted: #5a6b7d;
+  --line: #d9e3ee;
+  --accent: #0b8fb3;
+  --accent-soft: #e2f4fa;
+  --up: #b86e00;
+  --code-bg: #eef3f8;
+  --ok: #1f8a5b;
+  --warn: #a5650a;
+  --font-body: "Noto Sans SC", -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #07111d; --surface: #0c1a2a; --fg: #dce9f5; --muted: #8aa0b6; --line: #1d3247;
+    --accent: #3fd4f2; --accent-soft: #0e2a3a; --up: #f2b453; --code-bg: #10223a; --ok: #4fd39a; --warn: #f0b45a;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #07111d; --surface: #0c1a2a; --fg: #dce9f5; --muted: #8aa0b6; --line: #1d3247;
+  --accent: #3fd4f2; --accent-soft: #0e2a3a; --up: #f2b453; --code-bg: #10223a; --ok: #4fd39a; --warn: #f0b45a;
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+body {
+  background: var(--bg); color: var(--fg); font: 15px/1.75 var(--font-body);
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 0 64px;
+}
+.wrap { max-width: 1120px; margin: 0 auto; display: grid; grid-template-columns: 210px minmax(0, 1fr); gap: 48px; }
+@media (max-width: 860px) { .wrap { grid-template-columns: minmax(0, 1fr); gap: 0; } nav.toc { display: none; } }
+
+header.doc { max-width: 1120px; margin: 0 auto; padding-block: 48px 28px; border-bottom: 1px solid var(--line); margin-bottom: 36px; }
+.kicker { font: 600 12px/1 var(--font-mono); letter-spacing: 0.14em; color: var(--accent); text-transform: uppercase; }
+h1 { font-size: clamp(28px, 4.2vw, 40px); line-height: 1.2; margin: 14px 0 12px; font-weight: 700; text-wrap: balance; }
+.lede { color: var(--muted); max-width: 68ch; margin: 0; }
+.meta { display: flex; flex-wrap: wrap; gap: 8px 18px; margin-top: 18px; font: 13px var(--font-mono); color: var(--muted); }
+.meta b { color: var(--fg); font-weight: 600; }
+
+nav.toc { position: sticky; top: calc(env(safe-area-inset-top, 0px) + 24px); align-self: start; font-size: 13px; }
+nav.toc ol { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; counter-reset: toc; }
+nav.toc li { counter-increment: toc; }
+nav.toc a { display: block; padding: 4px 10px; border-left: 2px solid var(--line); color: var(--muted); text-decoration: none; }
+nav.toc a::before { content: counter(toc, decimal-leading-zero) "  "; font-family: var(--font-mono); font-size: 11px; color: var(--accent); }
+nav.toc a:hover, nav.toc a:focus-visible { color: var(--fg); border-left-color: var(--accent); outline: none; }
+
+main { min-width: 0; }
+section { margin-bottom: 52px; scroll-margin-top: 20px; }
+h2 { font-size: 22px; margin: 0 0 14px; padding-top: 4px; display: flex; gap: 12px; align-items: baseline; text-wrap: balance; }
+h2 .n { font: 600 13px var(--font-mono); color: var(--accent); }
+h3 { font-size: 16px; margin: 26px 0 8px; }
+p, li { max-width: 72ch; }
+p { margin: 0 0 12px; }
+ul, ol { padding-left: 1.3em; margin: 0 0 12px; }
+li { margin-bottom: 4px; }
+a { color: var(--accent); }
+code { font: 0.86em var(--font-mono); background: var(--code-bg); padding: 1px 6px; border-radius: 4px; overflow-wrap: anywhere; }
+pre.code { font: 12.5px/1.6 var(--font-mono); background: var(--code-bg); border: 1px solid var(--line); border-radius: 8px; padding: 14px 16px; overflow-x: auto; margin: 0 0 16px; }
+
+.scroll { overflow-x: auto; margin: 0 0 16px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); }
+table { border-collapse: collapse; width: 100%; font-size: 13.5px; }
+th, td { text-align: left; padding: 9px 14px; border-bottom: 1px solid var(--line); vertical-align: top; }
+th { font-weight: 600; font-size: 12px; letter-spacing: 0.06em; color: var(--muted); background: var(--accent-soft); white-space: nowrap; }
+tr:last-child td { border-bottom: none; }
+td.mono, td code { font-family: var(--font-mono); font-size: 12.5px; }
+td.num { font-variant-numeric: tabular-nums; white-space: nowrap; }
+
+.diagram { border: 1px solid var(--line); border-radius: 8px; background: var(--surface); padding: 18px; overflow-x: auto; margin: 0 0 16px; }
+.diagram pre.mermaid { margin: 0; background: transparent; text-align: center; }
+.caption { font-size: 12.5px; color: var(--muted); margin: -8px 0 16px; }
+
+.grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 14px; margin-bottom: 16px; }
+.mod { border: 1px solid var(--line); border-radius: 8px; padding: 14px 16px; background: var(--surface); min-width: 0; }
+.mod h4 { margin: 0 0 4px; font-size: 14.5px; }
+.mod .path { font: 12px var(--font-mono); color: var(--accent); margin-bottom: 6px; overflow-wrap: anywhere; }
+.mod p { font-size: 13.5px; color: var(--muted); margin: 0; }
+
+.note { border-left: 3px solid var(--accent); background: var(--accent-soft); padding: 10px 14px; border-radius: 0 6px 6px 0; margin: 0 0 16px; font-size: 14px; max-width: 72ch; }
+.note b { color: var(--fg); }
+.tag { display: inline-block; font: 600 11px var(--font-mono); padding: 1px 7px; border-radius: 999px; border: 1px solid currentColor; }
+.tag.ok { color: var(--ok); } .tag.warn { color: var(--warn); }
+.dl { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 6px 18px; font-size: 14px; margin-bottom: 16px; }
+.dl dt { font-family: var(--font-mono); font-size: 12.5px; color: var(--accent); padding-top: 2px; }
+.dl dd { margin: 0; }
+@media (max-width: 520px) { .dl { grid-template-columns: minmax(0, 1fr); } .dl dd { margin-bottom: 8px; } }
+</style>
+
+<header class="doc">
+  <div class="kicker">Traffic Earth · Architecture</div>
+  <h1>流量地球 架构设计</h1>
+  <p class="lede">在一个缓慢自转的 3D 地球上，实时展示家庭或办公局域网的流量流向哪里、有多少、属于什么类别。本文描述当前实现（v0.1）的技术栈、模块划分、数据管线和关键取舍。</p>
+  <div class="meta">
+    <span>版本 <b>0.1</b></span>
+    <span>许可证 <b>MIT</b></span>
+    <span>部署 <b>Docker · amd64 / arm64</b></span>
+    <span>更新 <b>2026-10-21</b></span>
+  </div>
+</header>
+
+<div class="wrap">
+  <nav class="toc" aria-label="目录">
+    <ol>
+      <li><a href="#goals">定位与目标</a></li>
+      <li><a href="#overview">总体架构</a></li>
+      <li><a href="#stack">技术栈</a></li>
+      <li><a href="#sources">数据源与接入</a></li>
+      <li><a href="#merge">合并与去重</a></li>
+      <li><a href="#pipeline">数据管线</a></li>
+      <li><a href="#backend">后端模块</a></li>
+      <li><a href="#protocol">实时帧与接口</a></li>
+      <li><a href="#storage">存储</a></li>
+      <li><a href="#frontend">前端模块</a></li>
+      <li><a href="#config">配置中心与安全</a></li>
+      <li><a href="#i18n">国际化</a></li>
+      <li><a href="#deploy">部署与运维</a></li>
+      <li><a href="#limits">已知限制与规划</a></li>
+    </ol>
+  </nav>
+
+  <main>
+    <section id="goals">
+      <h2><span class="n">01</span>定位与目标</h2>
+      <p>流量地球是一个可以自行部署的开源应用。它从局域网出口路由器读取连接表，把每条连接定位到地球上的城市，再按设备、目标、地区和类别做实时统计。</p>
+      <ul>
+        <li><b>主数据源是 OpenWrt 路由器。</b>OpenWrt 及其衍生固件（ImmortalWrt 等）装机量大，产品不应依赖任何代理软件。</li>
+        <li><b>mihomo 是可选增强。</b>路由器上运行 mihomo（Nikki、OpenClash）时，可以补充域名、规则和代理出口；使用 fake-ip 模式时必须接入。</li>
+        <li><b>只读接入，数据不出本地。</b>路由器端只装一个只读插件；除了每月下载一次 IP 地理库，不向任何外部服务发送数据。</li>
+        <li><b>界面完整双语，演示友好。</b>中文和英文互不混杂；提供演示模式，用于录屏和公开展示。</li>
+      </ul>
+      <p>不做的事：不做流量控制和拦截，不抓包、不解析载荷，不做公网多租户托管。</p>
+    </section>
+
+    <section id="overview">
+      <h2><span class="n">02</span>总体架构</h2>
+      <p>系统分三层：路由器侧的数据源、一个常驻的后端服务、浏览器里的渲染端。后端通过局域网拉取数据，计算速率并打上地理位置和类别，每秒把一帧聚合结果推给所有打开的页面。</p>
+      <div class="diagram">
+<pre class="mermaid">
+flowchart LR
+  subgraph R["路由器（OpenWrt ≥ 23.05）"]
+    CT["/proc/net/nf_conntrack"]
+    PL["rpcd ucode 插件<br/>traffic-earth.uc"]
+    LR["luci-rpc<br/>主机名 · DHCP · 网卡"]
+    MH["mihomo（可选）<br/>external-controller"]
+    CT --> PL
+  end
+  subgraph S["后端服务（Docker，Node 24）"]
+    AO["OpenWrt 适配器<br/>JSON-RPC /ubus 轮询"]
+    AM["mihomo 适配器<br/>WebSocket /connections"]
+    EN["统计引擎<br/>差分 · 去重 · 分类 · 汇总"]
+    GEO["GeoIP<br/>DB-IP Lite"]
+    DB[("SQLite<br/>WAL")]
+    API["REST + WebSocket<br/>Fastify"]
+    AO --> EN
+    AM --> EN
+    GEO --> EN
+    EN --> DB
+    EN --> API
+  end
+  subgraph B["浏览器"]
+    UI["地球 + HUD<br/>globe.gl / three.js"]
+    CFG["配置中心"]
+  end
+  PL -- "JSON-RPC" --> AO
+  LR -- "JSON-RPC" --> AO
+  MH -- "WS" --> AM
+  API -- "每秒一帧" --> UI
+  CFG <-- "REST" --> API
+</pre>
+      </div>
+      <p class="caption">后端只主动连接路由器；路由器和浏览器之间没有直接通信。</p>
+    </section>
+
+    <section id="stack">
+      <h2><span class="n">03</span>技术栈</h2>
+      <div class="scroll"><table>
+        <thead><tr><th>层</th><th>选型</th><th>用途和选择理由</th></tr></thead>
+        <tbody>
+          <tr><td>路由器插件</td><td><code>ucode</code> + <code>rpcd-mod-ucode</code></td><td>OpenWrt 23.05 起自带，LuCI 本身也用它。纯脚本，不分 CPU 架构，不需要编译或安装软件包。</td></tr>
+          <tr><td>后端运行时</td><td>Node.js 24 · TypeScript 5</td><td>内置 <code>WebSocket</code> 客户端和 <code>node:sqlite</code>，整个后端没有原生依赖，多架构镜像构建简单。</td></tr>
+          <tr><td>Web 框架</td><td>Fastify 5 · @fastify/websocket · @fastify/static · @fastify/cookie</td><td>REST、实时推送和静态资源由同一进程提供，资源占用低。</td></tr>
+          <tr><td>数据库</td><td>SQLite（<code>node:sqlite</code>，WAL 模式）</td><td>单文件、零运维，适合跑在树莓派和 NAS 上。写入每 5 分钟批量提交一次，减少 SD 卡和 eMMC 磨损。</td></tr>
+          <tr><td>地理定位</td><td>DB-IP City Lite / ASN Lite（mmdb）+ <code>maxmind</code> 读取库</td><td>免费、免注册，CC BY 4.0。首次启动自动下载，之后每月更新。</td></tr>
+          <tr><td>域名处理</td><td><code>tldts</code></td><td>把主机名归并到可注册域名，例如 <code>rr3.googlevideo.com</code> → <code>googlevideo.com</code>。</td></tr>
+          <tr><td>前端构建</td><td>Vite 6 · TypeScript · 原生 DOM</td><td>界面是固定布局的仪表盘，不需要框架；更新路径完全可控，便于做到每帧只改动必要的节点。</td></tr>
+          <tr><td>3D 渲染</td><td>globe.gl 2.46 · three.js 0.186</td><td>飞线、光点、涟漪、六边形点阵国界都是现成图层。three 的版本必须和 globe.gl 自带的一致。</td></tr>
+          <tr><td>地图数据</td><td>Natural Earth 国界 · NASA 夜景贴图</td><td>公共领域，随前端打包，无需联网加载。</td></tr>
+          <tr><td>部署</td><td>Docker（多阶段构建）· GitHub Actions + buildx</td><td>同时产出 amd64 和 arm64 镜像；数据全部放在 <code>/data</code> 卷里。</td></tr>
+        </tbody>
+      </table></div>
+    </section>
+
+    <section id="sources">
+      <h2><span class="n">04</span>数据源与接入</h2>
+
+      <h3>OpenWrt：为什么要装一个插件</h3>
+      <p>OpenWrt 已经有几种读取连接表的途径，但实测都满足不了需求。这些数字来自一台有 2000–2600 条连接的家用路由器：</p>
+      <div class="scroll"><table>
+        <thead><tr><th>途径</th><th>结论</th><th>原因</th></tr></thead>
+        <tbody>
+          <tr><td><code>luci.getConntrackList</code></td><td><span class="tag warn">不够用</span></td><td>只给每条连接的上下行合计字节，无法区分上传和下载。</td></tr>
+          <tr><td>rpcd <code>file read</code> 读 <code>/proc</code></td><td><span class="tag warn">不可用</span></td><td>procfs 文件大小报告为 0，只能读回第一页，约 4 KB。</td></tr>
+          <tr><td>rpcd <code>file exec</code> + <code>cat</code></td><td><span class="tag warn">不可用</span></td><td>输出上限约 256 KB，而完整连接表就有 570 KB。</td></tr>
+          <tr><td>自带 ucode 插件</td><td><span class="tag ok">采用</span></td><td>在路由器上解析连接表，分开上下行，丢掉纯内网连接，压缩成数组：1176 条约 136 KB，单次约 0.3 秒。</td></tr>
+        </tbody>
+      </table></div>
+
+      <h3>一行命令接入</h3>
+      <p>配置中心为每次接入生成一个一小时内有效的令牌。用户在路由器上执行：</p>
+      <pre class="code">wget -qO- 'http://&lt;服务地址&gt;:8097/api/openwrt/setup.sh?t=&lt;令牌&gt;' | sh</pre>
+      <p>脚本只做三件事，卸载命令在配置中心里提供：</p>
+      <ol>
+        <li>写入只读插件 <code>/usr/share/rpcd/ucode/traffic-earth.uc</code>，以及 ACL 文件 <code>/usr/share/rpcd/acl.d/traffic-earth.json</code>；</li>
+        <li>建立专用登录 <code>rpcd.traffic_earth</code>，密码是服务端生成的随机串（md5crypt 哈希），权限只包括插件的 <code>info</code> / <code>snapshot</code> 和 luci-rpc 的 <code>getHostHints</code> / <code>getDHCPLeases</code> / <code>getNetworkDevices</code>；</li>
+        <li>如果 <code>nf_conntrack_acct</code> 没开就打开它，然后重启 rpcd。</li>
+      </ol>
+
+      <h3>OpenWrt 适配器</h3>
+      <ul>
+        <li><b>轮询</b>：默认每 2 秒调用一次 <code>traffic-earth.snapshot</code>。如果单次调用耗时超过间隔的 1/4，就自动拉长间隔，避免拖累繁忙的路由器。</li>
+        <li><b>方向判断</b>：源地址属于本地（私网、路由器自身地址、LAN 侧 IPv6 前缀）的是出站连接；否则是入站连接，再根据 DNAT 后的回包地址找到真正被访问的内网主机。</li>
+        <li><b>WAN 总量</b>：从默认路由识别 WAN 网卡，排除 tun、WireGuard 等代理隧道，用网卡收发计数作为吞吐的真实值。</li>
+        <li><b>设备目录</b>：每 60 秒从 luci-rpc 拉取主机名、DHCP 租约和 IPv6 邻居，以 MAC 地址作为设备身份，把同一台设备的 IPv4 和多个 IPv6 地址合并到一起。</li>
+      </ul>
+
+      <h3>mihomo 适配器</h3>
+      <p>订阅 <code>ws://&lt;控制器&gt;/connections?interval=1000</code>，每秒得到一份完整快照，包含域名（<code>host</code> / <code>sniffHost</code>）、命中的规则和代理链。断线后按指数退避重连，最长间隔 30 秒；10 秒收不到数据视为断线。</p>
+    </section>
+
+    <section id="merge">
+      <h2><span class="n">05</span>合并与去重</h2>
+      <p>同一台路由器同时接入 OpenWrt 和 mihomo 时，一条被代理的连接会在两边各出现一次。合并的原则是：<b>出站连接以 mihomo 为准，入站和绕过代理的连接以路由器为准</b>。路由器侧的出站连接满足下面任一条件就跳过：</p>
+      <div class="scroll"><table>
+        <thead><tr><th>条件</th><th>说明</th></tr></thead>
+        <tbody>
+          <tr><td>回包来自路由器自己的地址</td><td>连接被本机透明代理（REDIRECT / TPROXY）接管。在 fake-ip 模式下，这类连接的目标地址都是 <code>198.18.x.x</code>，无法定位。</td></tr>
+          <tr><td>设备地址 + 源端口与 mihomo 中的连接相同</td><td>同一条连接，按 mihomo 的数据计入。</td></tr>
+          <tr><td>由路由器自身发起</td><td>大部分是 mihomo 连往代理节点的外层连接，计入会重复。</td></tr>
+          <tr><td>曾被 mihomo 认领过</td><td>认领关系会一直保留：mihomo 关闭连接后，conntrack 里还会残留一段时间，否则整条连接的累计字节会被再算一次。</td></tr>
+          <tr><td>关联的 mihomo 尚未就绪</td><td>启动阶段或 mihomo 断线时无法判断归属，暂不计入出站连接。</td></tr>
+        </tbody>
+      </table></div>
+      <div class="note"><b>读取 procfs 会漏条目。</b>连接表在读取过程中发生变化时，<code>/proc/net/nf_conntrack</code> 的分块遍历会漏掉一些条目。因此一条连接要<b>连续 3 次快照都缺席</b>才判定为关闭；只有最近 3 次快照里从未出现过的连接，才把它的累计字节全额计入。</div>
+    </section>
+
+    <section id="pipeline">
+      <h2><span class="n">06</span>数据管线</h2>
+      <div class="diagram">
+<pre class="mermaid">
+flowchart TB
+  A["适配器快照<br/>累计字节"] --> B["差分<br/>本次 − 上次 = 增量"]
+  B --> C{"新连接？"}
+  C -- "是" --> D["补全信息（每条连接一次）<br/>GeoIP 城市与 ASN · 可注册域名 · 类别 · 设备"]
+  C -- "否" --> E["累加增量"]
+  D --> E
+  E --> F["实时分组<br/>设备 × 目标 × 地点 × 类别 × 出口"]
+  E --> G["分钟桶<br/>设备 × 类别 × 国家 × 出口"]
+  E --> H["今日计数<br/>按类别、按设备"]
+  F --> I["每秒一帧<br/>WebSocket 推送"]
+  G --> J["每 5 分钟批量写入<br/>rollup_min / rollup_hour"]
+  B --> K["连接关闭<br/>写入 flows 明细"]
+</pre>
+      </div>
+      <h3>分类</h3>
+      <p>17 个类别：视频、社交、通讯、AI、开发、游戏、音乐、购物、资讯、下载更新、云与 CDN、智能家居、系统服务、广告追踪、外部访问、内网、其他。判断顺序是：</p>
+      <ol>
+        <li>域名后缀，最长匹配优先（比如 <code>music.163.com</code> 优先于 <code>163.com</code>）；</li>
+        <li>目标 ASN（比如 13335 Cloudflare 归为云与 CDN）；</li>
+        <li>端口（比如 53 归为系统服务，3478 归为通讯）；</li>
+        <li>入站连接统一归为「外部访问」。</li>
+      </ol>
+      <h3>速率口径</h3>
+      <p>标题栏的吞吐取自 WAN 网卡计数，是真实的线路流量。各行速率来自连接级差分，加起来可能和 WAN 总量有出入：代理封装大约有 4% 开销，两个数据源的采样时间也不完全对齐。</p>
+    </section>
+
+    <section id="backend">
+      <h2><span class="n">07</span>后端模块</h2>
+      <div class="grid2">
+        <div class="mod"><h4>适配器</h4><div class="path">server/src/adapters/</div><p>openwrt.ts（JSON-RPC 客户端、方向判断、设备目录）、mihomo.ts（WebSocket 订阅）、types.ts（统一的连接、快照、状态结构）。</p></div>
+        <div class="mod"><h4>统计引擎</h4><div class="path">server/src/engine.ts</div><p>每个数据源一个 Runner：差分、合并去重、补全、实时分组。Engine 负责分钟桶、今日计数、批量写盘、数据保留和实时帧。</p></div>
+        <div class="mod"><h4>地理定位</h4><div class="path">server/src/geo.ts</div><p>下载并加载 DB-IP 库，按月更新；识别私网和保留地址；IP 查询结果最多缓存 5 万条。</p></div>
+        <div class="mod"><h4>分类</h4><div class="path">server/src/classify.ts</div><p>内置约 600 条域名后缀规则、ASN 表和端口表。</p></div>
+        <div class="mod"><h4>路由器接入</h4><div class="path">server/src/openwrt-setup.ts · assets/openwrt/</div><p>生成一次性令牌和接入脚本（提示语言随界面语言）、md5crypt 密码哈希、卸载命令。</p></div>
+        <div class="mod"><h4>接口与认证</h4><div class="path">server/src/api.ts · auth.ts</div><p>REST 路由、实时推送、会话 Cookie、登录限速。错误一律返回「错误码 + 参数」，不返回文案。</p></div>
+        <div class="mod"><h4>配置与密钥</h4><div class="path">server/src/settings.ts · crypto.ts</div><p>配置存在 SQLite 里，修改后热生效；数据源密钥用 AES-256-GCM 加密，管理员密码用 scrypt 哈希。</p></div>
+        <div class="mod"><h4>存储</h4><div class="path">server/src/db.ts</div><p>建表和迁移、WAL 模式、事务辅助、审计日志。</p></div>
+      </div>
+    </section>
+
+    <section id="protocol">
+      <h2><span class="n">08</span>实时帧与接口</h2>
+      <h3>实时帧（<code>WS /api/live</code>，每秒一帧）</h3>
+      <p>一帧包含总量、数据源状态、聚合行、本帧用到的地点、设备名和今日计数。聚合行是帧的主体，字段名都很短，以控制体积：</p>
+      <div class="scroll"><table>
+        <thead><tr><th>字段</th><th>含义</th></tr></thead>
+        <tbody>
+          <tr><td class="mono">s</td><td>数据源 ID</td></tr>
+          <tr><td class="mono">d</td><td>设备键：MAC 地址，没有 MAC 时用 IP，路由器自身为 <code>router</code></td></tr>
+          <tr><td class="mono">h</td><td>可注册域名；没有域名时是对端 IP</td></tr>
+          <tr><td class="mono">p</td><td>地点键（经纬度保留一位小数），对应帧内 <code>points</code></td></tr>
+          <tr><td class="mono">c / x / i</td><td>类别 / 出口节点（直连为 <code>DIRECT</code>）/ 是否入站</td></tr>
+          <tr><td class="mono">u / w</td><td>流出 / 流入速率，单位字节每秒</td></tr>
+          <tr><td class="mono">n / o</td><td>连接数 / ASN 所属组织（仅无域名的行）</td></tr>
+        </tbody>
+      </table></div>
+      <h3>REST 接口</h3>
+      <div class="scroll"><table>
+        <thead><tr><th>方法与路径</th><th>用途</th><th>认证</th></tr></thead>
+        <tbody>
+          <tr><td class="mono">GET /api/state</td><td>是否已初始化、是否已登录</td><td>无</td></tr>
+          <tr><td class="mono">POST /api/setup</td><td>首次初始化：数据源、位置、管理员密码</td><td>仅限未初始化时</td></tr>
+          <tr><td class="mono">POST /api/login · /api/logout</td><td>登录、登出（每个 IP 每分钟最多尝试 5 次）</td><td>无</td></tr>
+          <tr><td class="mono">GET /api/meta</td><td>类别和颜色、家的位置、显示设置</td><td>需要</td></tr>
+          <tr><td class="mono">GET · PUT /api/settings</td><td>读取和修改配置（位置、保留时长、写盘间隔、画质等）</td><td>需要</td></tr>
+          <tr><td class="mono">POST /api/sources · PUT · DELETE /api/sources/:id</td><td>增删改数据源</td><td>需要</td></tr>
+          <tr><td class="mono">POST /api/sources/test</td><td>测试连接，返回结构化的结果</td><td>初始化期间无需</td></tr>
+          <tr><td class="mono">POST /api/openwrt/prepare</td><td>生成接入令牌、一行命令和完整脚本</td><td>初始化期间无需</td></tr>
+          <tr><td class="mono">GET /api/openwrt/setup.sh?t=</td><td>路由器下载接入脚本</td><td>令牌</td></tr>
+          <tr><td class="mono">GET /api/devices · PUT /api/devices/:key</td><td>设备列表、修改名称和图标</td><td>需要</td></tr>
+          <tr><td class="mono">POST /api/geoip/update · /api/password</td><td>立即更新地理库、修改密码</td><td>需要</td></tr>
+        </tbody>
+      </table></div>
+    </section>
+
+    <section id="storage">
+      <h2><span class="n">09</span>存储</h2>
+      <div class="scroll"><table>
+        <thead><tr><th>表</th><th>内容</th><th>默认保留</th></tr></thead>
+        <tbody>
+          <tr><td class="mono">settings</td><td>配置项，键值对，值为 JSON</td><td class="num">永久</td></tr>
+          <tr><td class="mono">sessions</td><td>登录会话，有效期 30 天</td><td class="num">到期清理</td></tr>
+          <tr><td class="mono">devices</td><td>用户为设备起的名字和图标，以 MAC 或 IP 为键</td><td class="num">永久</td></tr>
+          <tr><td class="mono">flows</td><td>每条已关闭连接的明细：时间、设备、域名、IP、端口、地点、ASN、类别、出口、规则、字节数</td><td class="num">7 天</td></tr>
+          <tr><td class="mono">rollup_min</td><td>分钟汇总：数据源 × 设备 × 类别 × 国家 × 出口</td><td class="num">14 天</td></tr>
+          <tr><td class="mono">rollup_hour</td><td>小时汇总，维度同上</td><td class="num">730 天</td></tr>
+          <tr><td class="mono">audit</td><td>配置修改记录</td><td class="num">永久</td></tr>
+        </tbody>
+      </table></div>
+      <p>数据目录 <code>/data</code> 里还有 <code>geoip/</code>（约 135 MB 的地理库）和 <code>secret.key</code>（加密密钥，权限 600）。备份或迁移只需要复制整个目录。</p>
+    </section>
+
+    <section id="frontend">
+      <h2><span class="n">10</span>前端模块</h2>
+      <div class="grid2">
+        <div class="mod"><h4>地球</h4><div class="path">web/src/globe.ts</div><p>夜景贴图、六边形点阵国界、大气光晕；每个目的地一条飞线和一个光点，前 8 个热点加涟漪；城市标签自己投影定位，并做碰撞剔除。</p></div>
+        <div class="mod"><h4>HUD 面板</h4><div class="path">web/src/globe.ts · styles.css</div><p>左侧：实时吞吐（上下镜像曲线）、今日总量、设备（点击筛选）、流量分类（外圈实时、内圈今日）。右侧：流向排行，分目标和地区两列。</p></div>
+        <div class="mod"><h4>配置中心</h4><div class="path">web/src/settings.ts · forms.ts · setup.ts</div><p>首次向导、数据源、位置、设备、显示、数据、访问七个页面。</p></div>
+        <div class="mod"><h4>演示模式</h4><div class="path">web/src/demo.ts</div><p><code>?demo</code> 匿名设备名并隐藏可识别信息，<code>&amp;tour</code> 自动运镜，<code>&amp;city=</code> 临时替换家的位置。</p></div>
+      </div>
+      <h3>飞线的视觉编码</h3>
+      <div class="dl">
+        <dt>方向</dt><dd>光点按数据的主要流向移动：以下载为主时流回家，以上传为主时流出。反向流量要多出 30% 才会掉头，避免来回闪烁。</dd>
+        <dt>粗细与速度</dt><dd>按对数比例分成 6 档；只有档位变化时才重建几何体，平时不触发重绘开销。</dd>
+        <dt>颜色</dt><dd>类别颜色；外网主动连进来的连接用青色。</dd>
+      </div>
+      <h3>流畅度设计</h3>
+      <ul>
+        <li><b>固定槽位</b>：面板高度固定，图例 8 行、排行各 12 行、设备 8 行，内容变化时只改文字，不改变布局。</li>
+        <li><b>平滑数值</b>：速率先做指数平滑再显示；排行每 3 秒才重排一次；进度条、环形图和标签淡入都由动画循环逐帧逼近目标值。</li>
+        <li><b>避免高开销效果</b>：动态画布上方不使用毛玻璃和混合模式；标签用 <code>transform</code> 定位，先统一读取尺寸再统一写入。</li>
+        <li><b>自动画质</b>：后台和卡顿时段不计入帧率统计。连续低于 30 帧时降档，恢复后自动升档；降档时补偿线宽。</li>
+      </ul>
+    </section>
+
+    <section id="config">
+      <h2><span class="n">11</span>配置中心与安全</h2>
+      <ul>
+        <li><b>必须登录</b>：页面能看到网络里每台设备的访问记录，所以首次初始化时必须设置管理员密码，或者通过环境变量 <code>ADMIN_PASSWORD</code> 预设。</li>
+        <li><b>密钥不出服务端</b>：路由器密码和 mihomo secret 在库里加密存储，接口永远不会把它们返回给浏览器，界面上只显示「已设置」。</li>
+        <li><b>最小权限</b>：路由器上的专用账号只能调用 5 个只读方法，不能执行命令，也不能读写文件。</li>
+        <li><b>热生效</b>：修改数据源后对应的适配器会立即重建，不需要重启服务。</li>
+        <li><b>审计</b>：初始化、数据源增删改、配置修改、改密码都会写入审计日志。</li>
+      </ul>
+    </section>
+
+    <section id="i18n">
+      <h2><span class="n">12</span>国际化</h2>
+      <p>界面上的每一处文字都经过翻译函数；切换语言时整个视图重建。服务端从不返回文案，只返回错误码和参数，由浏览器按当前语言渲染。</p>
+      <ul>
+        <li><b>国家名</b>：由浏览器的 <code>Intl.DisplayNames</code> 按语言生成。</li>
+        <li><b>城市名</b>：DB-IP Lite 只有英文。中文界面使用内置对照表（约 250 个城市、250 个省或州）；查不到时退回「国家 · 省」，再退回只显示国家，不显示英文。</li>
+        <li><b>运营商名</b>：属于数据，只出现在悬停提示里；中文界面下常见运营商会翻译，其余不显示。</li>
+        <li><b>路由器脚本</b>：提示语使用生成命令时的界面语言。</li>
+      </ul>
+    </section>
+
+    <section id="deploy">
+      <h2><span class="n">13</span>部署与运维</h2>
+      <pre class="code">services:
+  traffic-earth:
+    image: ghcr.io/&lt;owner&gt;/traffic-earth:latest
+    restart: unless-stopped
+    ports: ["8097:8097"]
+    volumes: ["./data:/data"]
+    environment: ["TZ=Asia/Shanghai"]</pre>
+      <div class="scroll"><table>
+        <thead><tr><th>项目</th><th>实测或默认值</th></tr></thead>
+        <tbody>
+          <tr><td>参考硬件</td><td>树莓派 4（4 GB），容器常驻内存约 265 MB，其中地理库约 130 MB</td></tr>
+          <tr><td>路由器负载</td><td>2000–2600 条连接时，每 2 秒一次快照，每次约 0.3 秒</td></tr>
+          <tr><td>浏览器</td><td>M2 Max、1920×1080 下稳定 120 帧；渲染全部在观看端进行，服务器不参与渲染</td></tr>
+          <tr><td>镜像</td><td>node:24-bookworm-slim，以非 root 用户运行，内置健康检查</td></tr>
+          <tr><td>环境变量</td><td><code>PORT</code>、<code>DATA_DIR</code>、<code>TZ</code>（决定「今日」的起点）、<code>ADMIN_PASSWORD</code></td></tr>
+        </tbody>
+      </table></div>
+    </section>
+
+    <section id="limits">
+      <h2><span class="n">14</span>已知限制与规划</h2>
+      <h3>已知限制</h3>
+      <ul>
+        <li>只接 OpenWrt 时看不到域名，类别只能靠 ASN 和端口推断。</li>
+        <li>免费地理库只精确到城市；任播地址（1.1.1.1、各类 CDN）的位置可能不合常理。</li>
+        <li>开启硬件流量卸载时，被卸载的连接计数可能更新不及时。</li>
+        <li>连接表每次整张拉取；连接数达到几万条的网络，轮询会自动放慢。</li>
+        <li>今日分类只有全网口径，按设备筛选时无法显示该设备的今日分类。</li>
+      </ul>
+      <h3>后续规划</h3>
+      <div class="scroll"><table>
+        <thead><tr><th>阶段</th><th>内容</th></tr></thead>
+        <tbody>
+          <tr><td>P2</td><td>历史回放（时间轴拖回过去 24 小时）、分类规则编辑器、免登录的只读展示链接、多数据源界面</td></tr>
+          <tr><td>P3</td><td>读取 dnsmasq 查询日志补全域名、异常告警（通用 webhook）、sing-box 适配器、按设备的今日分类</td></tr>
+        </tbody>
+      </table></div>
+    </section>
+  </main>
+</div>
