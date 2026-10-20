@@ -16,5 +16,10 @@
     "@types/three": "^0.186.0",
     "typescript": "^5.8.3",
     "vite": "^6.3.5"
-  }
+  },
+  "main": "index.js",
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "description": ""
 }

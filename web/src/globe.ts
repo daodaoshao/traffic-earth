@@ -751,63 +751,82 @@ export async function showGlobe(root: HTMLElement) {
     requestAnimationFrame(loop);
   };
 
-  let sparkMax = 1;
+  // Mirrored chart: download above the center line, upload below, each on its own scale.
+  // Sharing one axis flattened the upload curve, which is usually a few percent of download.
+  const sparkMax = { up: 1, down: 1 };
   function drawSpark(now: number) {
     const ctx = spark.getContext('2d');
     if (!ctx || !spark.width) return;
     const dpr = window.devicePixelRatio || 1;
     const w = spark.width / dpr;
     const hh = spark.height / dpr;
+    const mid = Math.round(hh * 0.58) + 0.5; // download gets a little more room
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, w, hh);
-    const peak = Math.max(1, ...hist.map((p) => Math.max(p.up, p.down)));
-    sparkMax += (peak * 1.15 - sparkMax) * 0.06;
+    for (const k of ['up', 'down'] as const) {
+      const peak = Math.max(1, ...hist.map((p) => p[k]));
+      sparkMax[k] += (peak * 1.15 - sparkMax[k]) * 0.06;
+    }
     const pps = w / HISTORY_SEC;
     // The newest sample sits one second from the right edge, so the curve scrolls continuously.
     const x = (tt: number) => w - ((now - tt) / 1000 + 1) * pps;
-    const y = (v: number) => hh - 2 - Math.min(1, v / sparkMax) * (hh - 6);
-    ctx.strokeStyle = 'rgba(46,230,255,0.08)';
+    const y = (k: 'up' | 'down', v: number) => {
+      const f = Math.min(1, v / sparkMax[k]);
+      return k === 'down' ? mid - f * (mid - 3) : mid + f * (hh - mid - 3);
+    };
+    ctx.strokeStyle = 'rgba(46,230,255,0.07)';
     ctx.lineWidth = 1;
     ctx.beginPath();
-    for (let g = 1; g < 4; g++) {
-      ctx.moveTo(0, (hh / 4) * g);
-      ctx.lineTo(w, (hh / 4) * g);
+    for (const g of [0.5, 1]) {
+      ctx.moveTo(0, mid - (mid - 3) * g);
+      ctx.lineTo(w, mid - (mid - 3) * g);
     }
+    ctx.moveTo(0, mid + (hh - mid - 3) * 0.5);
+    ctx.lineTo(w, mid + (hh - mid - 3) * 0.5);
+    ctx.stroke();
+    ctx.strokeStyle = 'rgba(46,230,255,0.22)';
+    ctx.beginPath();
+    ctx.moveTo(0, mid);
+    ctx.lineTo(w, mid);
     ctx.stroke();
     if (hist.length >= 2) {
-      const path = (key: 'up' | 'down') => {
+      const path = (k: 'up' | 'down') => {
         ctx.beginPath();
         hist.forEach((p, i) => {
           const px = x(p.t);
-          const py = y(p[key]);
+          const py = y(k, p[k]);
           if (!i) ctx.moveTo(px, py);
           else {
             const q = hist[i - 1];
             const mx = (x(q.t) + px) / 2;
-            ctx.bezierCurveTo(mx, y(q[key]), mx, py, px, py);
+            ctx.bezierCurveTo(mx, y(k, q[k]), mx, py, px, py);
           }
         });
       };
-      const grad = ctx.createLinearGradient(0, 0, 0, hh);
-      grad.addColorStop(0, 'rgba(46,230,255,0.4)');
-      grad.addColorStop(1, 'rgba(46,230,255,0)');
-      path('down');
-      ctx.lineTo(x(hist[hist.length - 1].t), hh);
-      ctx.lineTo(x(hist[0].t), hh);
-      ctx.fillStyle = grad;
-      ctx.fill();
-      path('down');
-      ctx.strokeStyle = '#2ee6ff';
-      ctx.lineWidth = 1.5;
-      ctx.stroke();
-      path('up');
-      ctx.strokeStyle = '#ffb547';
-      ctx.lineWidth = 1.2;
-      ctx.stroke();
+      for (const [k, color, rgb] of [
+        ['down', '#2ee6ff', '46,230,255'],
+        ['up', '#ffb547', '255,181,71'],
+      ] as const) {
+        const edge = k === 'down' ? 0 : hh;
+        const grad = ctx.createLinearGradient(0, edge, 0, mid);
+        grad.addColorStop(0, `rgba(${rgb},0.45)`);
+        grad.addColorStop(1, `rgba(${rgb},0.02)`);
+        path(k);
+        ctx.lineTo(x(hist[hist.length - 1].t), mid);
+        ctx.lineTo(x(hist[0].t), mid);
+        ctx.fillStyle = grad;
+        ctx.fill();
+        path(k);
+        ctx.strokeStyle = color;
+        ctx.lineWidth = 1.4;
+        ctx.stroke();
+      }
     }
     ctx.font = '10px ui-monospace, monospace';
-    ctx.fillStyle = 'rgba(111,138,168,0.9)';
-    ctx.fillText(rate(sparkMax), 2, 10);
+    ctx.fillStyle = 'rgba(46,230,255,0.75)';
+    ctx.fillText(`↓ ${rate(sparkMax.down)}`, 2, 10);
+    ctx.fillStyle = 'rgba(255,181,71,0.8)';
+    ctx.fillText(`↑ ${rate(sparkMax.up)}`, 2, hh - 3);
   }
 
   function placeLabels() {

@@ -88,7 +88,7 @@ body.q-low .scanlines, body.q-low .vignette { display: none; }
 .big .lbl { font: 11px var(--sans); color: var(--muted); letter-spacing: 2px; margin-bottom: 4px; }
 .down .v { color: var(--down); text-shadow: 0 0 14px rgba(46,230,255,0.5); }
 .up .v { color: var(--up); text-shadow: 0 0 14px rgba(255,181,71,0.45); font-size: 22px; }
-.spark { width: 100%; height: 70px; margin-top: 10px; display: block; }
+.spark { width: 100%; height: 84px; margin-top: 10px; display: block; }
 .kv { display: flex; justify-content: space-between; font: 12px var(--mono); color: var(--muted); margin-top: 6px; }
 .kv b { color: var(--text); font-weight: 500; }
 
