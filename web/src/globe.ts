@@ -74,6 +74,8 @@ interface ArcObj {
   gap: number;
   info: string;
   sig: string;
+  /** Data mostly flows toward home (download) — dashes run from the destination to home. */
+  toHome: boolean;
 }
 
 interface PointObj {
@@ -282,7 +284,7 @@ export async function showGlobe(root: HTMLElement) {
       h('h4.sub-head', null, t('hud.byRegion')),
       regionList.el,
     ),
-    h('div.footer', null, t('hud.attribution')),
+    h('div.footer', null, h('div.arc-hint', null, t('hud.arcHint')), t('hud.attribution')),
   );
   root.replaceChildren(stage, h('div.scanlines'), h('div.vignette'), hud, banner);
 
@@ -511,17 +513,21 @@ export async function showGlobe(root: HTMLElement) {
         `<b>${flag(p.cc)} ${esc(placeName(p))}</b><br>↓ ${rate(a.down)} &nbsp; ↑ ${rate(a.up)} · ${esc(t('hud.connCount', { n: a.n }))}<br>` +
         [...a.hosts.entries()].sort((x, y) => y[1] - x[1]).slice(0, 4).map(([hst]) => esc(hst)).join('<br>');
 
-      const sig = `${level}|${color}|${inbound ? 1 : 0}|${quality === 'low' ? 1 : 0}`;
       let arc = arcs.get(key);
       if (!arc) {
-        arc = { startLat: 0, startLng: 0, endLat: 0, endLng: 0, color: ['', ''], stroke: null, time: 0, gap: 0, info, sig: '' };
+        arc = { startLat: 0, startLng: 0, endLat: 0, endLng: 0, color: ['', ''], stroke: null, time: 0, gap: 0, info, sig: '', toHome: a.down >= a.up };
         arcs.set(key, arc);
       }
+      // Dashes follow the bytes: toward home when downloads dominate, outward when uploads do.
+      // The other direction must lead by 30% before an arc turns around, so it doesn't flicker.
+      if (arc.toHome && a.up > a.down * 1.3) arc.toHome = false;
+      else if (!arc.toHome && a.down > a.up * 1.3) arc.toHome = true;
+      const sig = `${level}|${color}|${arc.toHome ? 1 : 0}|${quality === 'low' ? 1 : 0}`;
       arc.info = info;
       if (arc.sig !== sig) {
         arc.sig = sig;
         arcsChanged = true;
-        if (inbound) Object.assign(arc, { startLat: p.lat, startLng: p.lon, endLat: home.lat, endLng: home.lon });
+        if (arc.toHome) Object.assign(arc, { startLat: p.lat, startLng: p.lon, endLat: home.lat, endLng: home.lon });
         else Object.assign(arc, { startLat: home.lat, startLng: home.lon, endLat: p.lat, endLng: p.lon });
         arc.color = level === 0 ? [hexA(color, 0.1), hexA(color, 0.4)] : [hexA(color, 0.35), hexA(color, 1)];
         arc.stroke = quality === 'low' ? null : level === 0 ? 0.15 : 0.15 + level * 0.25;
