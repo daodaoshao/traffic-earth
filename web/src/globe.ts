@@ -1,6 +1,7 @@
 import Globe, { type GlobeInstance } from 'globe.gl';
 import { api, type Category, type Frame, type Meta, type Point } from './api';
 import { cities } from './cities';
+import { anonDevice, demo } from './demo';
 import { catName, lang, msgText, placeName, setLang, t } from './i18n';
 import { zhOrg } from './places-zh';
 import { bytes, flag, fmtRate, h, rate } from './ui';
@@ -100,7 +101,10 @@ export async function showGlobe(root: HTMLElement) {
   const meta = await api<Meta>('/api/meta');
   const cats = new Map<string, Category>(meta.categories.map((c) => [c.id, c]));
   const catColor = (id: string) => cats.get(id)?.color ?? '#6c7a89';
-  const home = meta.home ?? { lat: 39.9, lon: 116.4, name: '' };
+  // ?city=… moves home for a recording without touching the saved setting.
+  const home = demo.city
+    ? { lat: demo.city.lat, lon: demo.city.lon, name: demo.city.name }
+    : (meta.home ?? { lat: 39.9, lon: 116.4, name: '' });
   // A home name picked from the city list is shown in the viewer's language.
   const preset = cities.find((c) => c[0] === home.name || c[1] === home.name);
   const homeName = preset ? (lang === 'zh' ? preset[0] : preset[1]) : home.name || t('hud.home');
@@ -114,7 +118,7 @@ export async function showGlobe(root: HTMLElement) {
   const langBtn = h('button.icon-btn', { type: 'button', title: t('lang.label') }, lang === 'zh' ? 'EN' : '中');
   langBtn.onclick = () => setLang(lang === 'zh' ? 'en' : 'zh');
   const banner = h('div.banner.hidden');
-  const qualityTag = h('span');
+  const qualityTag = h('span.q-tag');
 
   const vDown = h('span.v', null, '0');
   const vDownU = h('span.u', null, 'bps');
@@ -276,7 +280,7 @@ export async function showGlobe(root: HTMLElement) {
       h('h4.sub-head', null, t('hud.byRegion')),
       regionList.el,
     ),
-    h('div.footer', null, h('div.arc-hint', null, t('hud.arcHint')), t('hud.attribution'), '  ·  ', qualityTag),
+    h('div.footer', null, h('div.arc-hint', null, t('hud.arcHint')), t('hud.attribution'), qualityTag),
   );
   root.replaceChildren(stage, h('div.scanlines'), h('div.vignette'), hud, banner);
 
@@ -329,14 +333,60 @@ export async function showGlobe(root: HTMLElement) {
   controls.minDistance = 130;
   controls.maxDistance = 700;
   let resume: number | undefined;
+  // The camera tour drives rotation itself; otherwise resume spinning a while after the user lets go.
+  let userUntil = 0;
   controls.addEventListener('start', () => {
     controls.autoRotate = false;
     clearTimeout(resume);
+    userUntil = Infinity;
   });
   controls.addEventListener('end', () => {
-    resume = window.setTimeout(() => (controls.autoRotate = meta.display.rotateSpeed > 0), 8000);
+    userUntil = performance.now() + 15000;
+    if (!demo.tour) resume = window.setTimeout(() => (controls.autoRotate = meta.display.rotateSpeed > 0), 8000);
   });
   globe.pointOfView({ lat: home.lat - 8, lng: home.lon - 15, altitude: 2.4 }, 0);
+
+  /** Busiest destinations away from home, for the camera tour. */
+  let tourTargets: { lat: number; lon: number }[] = [];
+  const toVec = (lat: number, lon: number) => {
+    const a = (lat * Math.PI) / 180;
+    const b = (lon * Math.PI) / 180;
+    return [Math.cos(a) * Math.cos(b), Math.cos(a) * Math.sin(b), Math.sin(a)];
+  };
+  /** Great-circle midpoint, so both home and the destination are in frame. */
+  const midpoint = (lat1: number, lon1: number, lat2: number, lon2: number) => {
+    const [x1, y1, z1] = toVec(lat1, lon1);
+    const [x2, y2, z2] = toVec(lat2, lon2);
+    const x = x1 + x2;
+    const y = y1 + y2;
+    const z = z1 + z2;
+    return { lat: (Math.atan2(z, Math.hypot(x, y)) * 180) / Math.PI, lng: (Math.atan2(y, x) * 180) / Math.PI };
+  };
+  let tourTimer: number | undefined;
+  if (demo.tour) {
+    let step = 0;
+    const run = () => {
+      if (performance.now() < userUntil) {
+        tourTimer = window.setTimeout(run, 1000);
+        return;
+      }
+      type Shot = { lat: number; lng: number; altitude: number; move: number; hold: number; spin?: boolean };
+      const shots: Shot[] = [
+        { lat: home.lat - 10, lng: home.lon - 30, altitude: 2.7, move: 5000, hold: 10000, spin: true },
+        { lat: home.lat - 2, lng: home.lon, altitude: 1.3, move: 5000, hold: 6000 },
+        ...tourTargets.slice(0, 3).map((p) => {
+          const m = midpoint(home.lat, home.lon, p.lat, p.lon);
+          return { lat: m.lat - 5, lng: m.lng, altitude: 2.0, move: 6000, hold: 6000 };
+        }),
+      ];
+      const shot = shots[step % shots.length];
+      step++;
+      controls.autoRotate = !!shot.spin && meta.display.rotateSpeed > 0;
+      globe.pointOfView({ lat: shot.lat, lng: shot.lng, altitude: shot.altitude }, shot.move);
+      tourTimer = window.setTimeout(run, shot.move + shot.hold);
+    };
+    tourTimer = window.setTimeout(run, 4000);
+  }
 
   const resize = () => {
     const r = stage.getBoundingClientRect();
@@ -376,7 +426,7 @@ export async function showGlobe(root: HTMLElement) {
     globe.globeImageUrl(q === 'low' ? '/img/earth-dark.jpg' : '/img/earth-night.jpg');
     document.body.classList.toggle('q-low', q === 'low');
     document.body.dataset.quality = q;
-    setText(qualityTag, t('hud.quality', { q: t(`hud.q.${q}`) }) + (meta.display.quality === 'auto' ? t('hud.qualityAuto') : ''));
+    setText(qualityTag, '  ·  ' + t('hud.quality', { q: t(`hud.q.${q}`) }) + (meta.display.quality === 'auto' ? t('hud.qualityAuto') : ''));
   }
   applyQuality(quality);
 
@@ -392,6 +442,7 @@ export async function showGlobe(root: HTMLElement) {
 
   const devName = (k: string) => {
     const d = frame?.devices[k];
+    if (demo.on) return anonDevice(k, d?.name ?? '');
     const name = d?.name || (k === 'router' ? t('hud.router') : k);
     return (d?.icon ? d.icon + ' ' : '') + name;
   };
@@ -487,6 +538,11 @@ export async function showGlobe(root: HTMLElement) {
 
   function updateGlobe(f: Frame, byPoint: Map<string, Agg>) {
     const ranked = [...byPoint.entries()].sort((a, b) => b[1].up + b[1].down - (a[1].up + a[1].down)).slice(0, MAX_ARCS);
+    tourTargets = ranked
+      .map(([k]) => f.points[k])
+      .filter((p) => Math.abs(p.lat - home.lat) + Math.abs(p.lon - home.lon) > 15)
+      .slice(0, 3)
+      .map((p) => ({ lat: p.lat, lon: p.lon }));
     const maxT = Math.max(1, ...ranked.map(([, a]) => a.up + a.down));
     let arcsChanged = false;
     let ptsChanged = false;
@@ -845,6 +901,7 @@ export async function showGlobe(root: HTMLElement) {
 
   return () => {
     alive = false;
+    clearTimeout(tourTimer);
     clearInterval(clockTimer);
     ws?.close();
     window.removeEventListener('resize', resize);

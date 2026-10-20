@@ -208,3 +208,7 @@ label.check { display: flex; gap: 8px; align-items: center; cursor: pointer; }
 .src .status { font-size: 12px; flex: 1; }
 .src-url { font-size: 12px; margin-top: 4px; }
 .arc-hint { color: var(--text); opacity: 0.75; margin-bottom: 2px; }
+
+/* Presentation mode (?demo): nothing that identifies the household, no cursor in recordings. */
+.demo, .demo * { cursor: none !important; }
+.demo .topbar a.icon-btn, .demo .src-chips, .demo .banner, .demo .q-tag { display: none !important; }
