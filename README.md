@@ -1,6 +1,6 @@
 # 流量地球 · Traffic Earth
 
-在一个缓慢自转的 3D 地球上，实时看你家网络的流量正流向世界的哪里。
+在一个缓慢自转的 3D 地球上，实时看家庭或办公局域网的流量正流向世界的哪里。
 
 - **流向**：每个目的地一条飞线，线宽表示实时速率，颜色表示流量类别，外网连进来的流量反向飞回家
 - **分类**：视频、社交、通讯、AI、开发、游戏、下载更新、云与 CDN、智能家居、广告追踪……按域名、ASN、端口自动归类
@@ -8,7 +8,7 @@
 - **配置中心**：数据源、家的位置、设备名、显示画质、数据保留时长，全部在网页上设置，修改后立即生效
 - **中文 / English**：界面完整双语，国家名随语言切换，中文城市名内置；语言设置只对当前浏览器生效
 
-*Watch where your home network traffic goes, live, on a 3D globe. Reads the connection table from an OpenWrt router; optionally merges in a mihomo core for host names and proxy exits.*
+*Watch where your home or office network traffic goes, live, on a 3D globe. Reads the connection table from an OpenWrt router; optionally merges in a mihomo core for host names and proxy exits.*
 
 ## 数据从哪来
 
@@ -69,7 +69,7 @@ docker compose up -d
 
 ## 隐私
 
-这个程序能看到家里每台设备连了哪些地方，所以做了以下限制：
+这个程序能看到网络里每台设备连了哪些地方，所以做了以下限制：
 
 - **必须登录才能访问**，登录尝试有频率限制；
 - 路由器密码和 mihomo secret 用数据目录里的独立密钥加密存储，**不会回传给浏览器**；
