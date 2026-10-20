@@ -1,0 +1,20 @@
+{
+  "name": "traffic-earth",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Watch where your mihomo traffic goes, live, on a 3D globe.",
+  "license": "MIT",
+  "workspaces": [
+    "server",
+    "web"
+  ],
+  "scripts": {
+    "dev:server": "npm run dev -w server",
+    "dev:web": "npm run dev -w web",
+    "build": "npm run build -w web && npm run build -w server",
+    "typecheck": "npm run typecheck -w server && npm run typecheck -w web"
+  },
+  "engines": {
+    "node": ">=22.12"
+  }
+}

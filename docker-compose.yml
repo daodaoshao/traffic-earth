@@ -1,0 +1,16 @@
+services:
+  traffic-earth:
+    # Prebuilt multi-arch image (amd64 / arm64). Or comment this out and use `build: .`
+    image: ghcr.io/traffic-earth/traffic-earth:latest
+    # build: .
+    container_name: traffic-earth
+    restart: unless-stopped
+    ports:
+      - "8097:8097"
+    volumes:
+      - ./data:/data
+    environment:
+      # Used for "today" totals and day boundaries.
+      - TZ=Asia/Shanghai
+      # Optional: skip the password step of the setup wizard.
+      # - ADMIN_PASSWORD=change-me
