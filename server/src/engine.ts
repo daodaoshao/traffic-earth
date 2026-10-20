@@ -33,6 +33,8 @@ interface ConnState {
   info: ConnInfo;
   up: number;
   down: number;
+  /** Consecutive snapshots this connection was missing from. */
+  miss: number;
 }
 
 export interface Point {
@@ -58,6 +60,8 @@ export interface Row {
   o?: string; // ASN org, for rows without a host name
 }
 
+/** Snapshots a router connection may be missing from before we call it closed. */
+const GRACE = 3;
 const pointKey = (lat: number, lon: number) => `${lat.toFixed(1)},${lon.toFixed(1)}`;
 const minuteOf = (t: number) => Math.floor(t / 60_000) * 60_000;
 const hourOf = (t: number) => Math.floor(t / 3_600_000) * 3_600_000;
@@ -118,8 +122,9 @@ class SourceRunner {
   localEnds = new Set<string>();
   /** Router connections a linked mihomo has reported at some point. */
   claimed = new Set<string>();
-  /** Every connection id in the previous snapshot, tracked or not. */
-  prevIds = new Set<string>();
+  /** Connection id -> snapshot number it was last listed in, tracked or not. */
+  recent = new Map<string, number>();
+  tick = 0;
   rows: Row[] = [];
   rate = { up: 0, down: 0 };
   hasTotals = false;
@@ -148,7 +153,7 @@ class SourceRunner {
     for (const st of this.conns.values()) this.engine.closed(this.cfg.id, st, Date.now());
     this.conns.clear();
     this.localEnds.clear();
-    this.prevIds.clear();
+    this.recent.clear();
     this.claimed.clear();
     this.rows = [];
     this.rate = { up: 0, down: 0 };
@@ -234,16 +239,17 @@ class SourceRunner {
       let du = 0;
       let dd = 0;
       if (!st) {
-        st = { info: this.enrich(c), up: c.up, down: c.down };
+        st = { info: this.enrich(c), up: c.up, down: c.down, miss: 0 };
         this.conns.set(c.id, st);
-        // Only a connection absent from the previous snapshot is really new. One we saw before but
+        // Only a connection absent from the last few snapshots is really new. One we saw before but
         // didn't track (startup, waiting for a linked core) has bytes from before; count from here on.
-        if (!first && !this.prevIds.has(c.id)) {
+        if (!first && !this.recent.has(c.id)) {
           du = c.up;
           dd = c.down;
           this.engine.account(this.cfg.id, st.info, 0, 0, 1);
         }
       } else {
+        st.miss = 0;
         du = Math.max(0, c.up - st.up);
         dd = Math.max(0, c.down - st.down);
         st.up = c.up;
@@ -267,11 +273,15 @@ class SourceRunner {
       row.n++;
     }
     this.localEnds = ends;
-    const live = new Set(s.conns.map((c) => c.id));
-    this.prevIds = live;
-    for (const id of this.claimed) if (!live.has(id)) this.claimed.delete(id);
+    // /proc/net/nf_conntrack can skip entries while the table changes under the reader, so a
+    // connection only counts as gone (or as new) after several snapshots without it.
+    this.tick++;
+    for (const c of s.conns) this.recent.set(c.id, this.tick);
+    for (const [id, t] of this.recent) if (this.tick - t >= GRACE) this.recent.delete(id);
+    for (const id of this.claimed) if (!this.recent.has(id)) this.claimed.delete(id);
+    const grace = this.cfg.type === 'openwrt' ? GRACE : 1;
     for (const [id, st] of this.conns) {
-      if (!seen.has(id)) {
+      if (!seen.has(id) && ++st.miss >= grace) {
         this.engine.closed(this.cfg.id, st, now);
         this.conns.delete(id);
       }
