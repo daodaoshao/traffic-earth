@@ -94,7 +94,7 @@ body.q-low .scanlines, body.q-low .vignette { display: none; }
 
 .donut-wrap { display: flex; gap: 10px; align-items: center; min-height: 0; flex: 1; overflow: hidden; }
 .donut { width: 118px; height: 118px; flex: none; }
-.donut circle { transition: stroke-dasharray .9s ease, stroke-dashoffset .9s ease, stroke .4s; }
+.donut circle { transition: stroke .4s; }
 .legend { flex: 1; min-width: 0; font-size: 12px; }
 .legend-note { height: 16px; font-size: 11px; }
 .legend .slot, .legend-head { display: flex; align-items: center; gap: 6px; height: 20px; transition: opacity .4s; }
@@ -117,7 +117,7 @@ body.q-low .scanlines, body.q-low .vignette { display: none; }
 .list .name small { color: var(--muted); margin-left: 6px; font-size: 11px; }
 .list .rate { font: 12px var(--mono); text-align: right; color: var(--down); }
 .list .bar { grid-column: 1 / -1; height: 3px; background: rgba(255,255,255,0.05); border-radius: 2px; overflow: hidden; }
-.list .bar i { display: block; height: 100%; width: 0; border-radius: 2px; transition: width .9s ease; }
+.list .bar i { display: block; height: 100%; width: 0; border-radius: 2px; }
 .list .empty { color: var(--muted); font-size: 12px; padding: 12px 0; text-align: center; }
 
 
@@ -125,7 +125,7 @@ body.q-low .scanlines, body.q-low .vignette { display: none; }
 .tooltip b { color: var(--accent); }
 .label-layer { position: absolute; inset: 0; pointer-events: none; overflow: hidden; }
 /* Starts invisible; placeLabels() fades it in once it has a position. */
-.globe-label { position: absolute; left: 0; top: 0; opacity: 0; will-change: transform; transition: opacity .3s; font: 11px var(--mono); color: #eaf8ff; text-shadow: 0 0 6px #000, 0 0 10px rgba(46,230,255,0.8); white-space: nowrap; pointer-events: none; }
+.globe-label { position: absolute; left: 0; top: 0; opacity: 0; will-change: transform; font: 11px var(--mono); color: #eaf8ff; text-shadow: 0 0 6px #000, 0 0 10px rgba(46,230,255,0.8); white-space: nowrap; pointer-events: none; }
 .globe-label.home { color: var(--accent); font-weight: 600; }
 
 .banner { position: fixed; z-index: 4; left: 50%; top: 64px; transform: translateX(-50%); background: rgba(40, 10, 20, 0.85); border: 1px solid var(--danger); color: #ffd6de; padding: 8px 14px; border-radius: 4px; font-size: 13px; }

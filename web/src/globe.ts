@@ -27,6 +27,33 @@ const setText = (el: HTMLElement | SVGElement, v: string) => {
   if (el.textContent !== v) el.textContent = v;
 };
 
+/**
+ * Values that glide toward a target inside the page's animation loop rather than via CSS
+ * transitions, so every motion follows the same clock (which a frame-by-frame recorder controls).
+ */
+class Glide {
+  private items = new Map<object, { cur: number; target: number; apply: (v: number) => void }>();
+  set(key: object, target: number, apply: (v: number) => void) {
+    const it = this.items.get(key);
+    if (it) {
+      it.target = target;
+      it.apply = apply;
+    } else this.items.set(key, { cur: target, target, apply: (apply(target), apply) });
+  }
+  drop(key: object) {
+    this.items.delete(key);
+  }
+  step(k = 0.08) {
+    for (const it of this.items.values()) {
+      if (Math.abs(it.target - it.cur) < 1e-3) continue;
+      it.cur += (it.target - it.cur) * k;
+      if (Math.abs(it.target - it.cur) < 1e-3) it.cur = it.target;
+      it.apply(it.cur);
+    }
+  }
+}
+const glide = new Glide();
+
 /** Exponentially smoothed values per key; keys fade out instead of vanishing. */
 class Smooth {
   v = new Map<string, number>();
@@ -218,7 +245,7 @@ export async function showGlobe(root: HTMLElement) {
           }
           setText(r.sub, m.sub);
           setText(r.val, rate(v));
-          r.bar.style.width = `${(v / max) * 100}%`;
+          glide.set(r.bar, (v / max) * 100, (x) => (r.bar.style.width = `${x.toFixed(2)}%`));
           r.row.title = [m.org, `↓ ${rate(m.down)}  ↑ ${rate(m.up)}`].filter(Boolean).join('\n');
         });
         empty.classList.toggle('hidden', order.length > 0);
@@ -626,6 +653,7 @@ export async function showGlobe(root: HTMLElement) {
     for (const [k, l] of labels)
       if (!want.has(k)) {
         l.el.remove();
+        glide.drop(l.el);
         labels.delete(k);
       }
     for (const k of want) {
@@ -665,8 +693,9 @@ export async function showGlobe(root: HTMLElement) {
         const v = i < LEGEND_SLOTS ? (k ? (vals.get(k) ?? 0) : 0) : Math.max(0, total - shownSum);
         const len = total > 0 ? (v / total) * rg.c : 0;
         seg.style.stroke = i < LEGEND_SLOTS ? (k ? catColor(k) : 'transparent') : '#3a4a5c';
-        seg.style.strokeDasharray = `${Math.max(0, len - 1.2)} ${rg.c}`;
-        seg.style.strokeDashoffset = String(-acc);
+        glide.set(seg, len, (x) => (seg.style.strokeDasharray = `${Math.max(0, x - 1.2).toFixed(2)} ${rg.c}`));
+        const off = -acc;
+        glide.set(seg.style, off, (x) => (seg.style.strokeDashoffset = x.toFixed(2)));
         acc += len;
       });
     };
@@ -705,7 +734,7 @@ export async function showGlobe(root: HTMLElement) {
       setText(r.name, devName(k));
       setText(r.sub, t('hud.todayBytes', { v: bytes(td ? td[0] + td[1] : 0) }));
       setText(r.val, rate(v));
-      r.bar.style.width = `${(v / dMax) * 100}%`;
+      glide.set(r.bar, (v / dMax) * 100, (x) => (r.bar.style.width = `${x.toFixed(2)}%`));
       r.row.classList.toggle('sel', filter === k);
     });
 
@@ -747,6 +776,7 @@ export async function showGlobe(root: HTMLElement) {
       lastSpark = now;
       drawSpark(now);
     }
+    glide.step();
     placeLabels();
     requestAnimationFrame(loop);
   };
@@ -841,11 +871,11 @@ export async function showGlobe(root: HTMLElement) {
       const sc = facing ? globe.getScreenCoords(l.lat, l.lng, l.alt) : null;
       const hit = sc && placed.some((o) => Math.abs(o.x - sc.x) < (o.w + l.w) / 2 + 6 && Math.abs(o.y - sc.y) < 18);
       if (!sc || hit) {
-        if (l.el.style.opacity !== '0') l.el.style.opacity = '0';
+        glide.set(l.el, 0, (x) => (l.el.style.opacity = x.toFixed(3)));
         continue;
       }
       placed.push({ x: sc.x, y: sc.y, w: l.w });
-      l.el.style.opacity = '1';
+      glide.set(l.el, 1, (x) => (l.el.style.opacity = x.toFixed(3)));
       l.el.style.transform = `translate3d(${sc.x.toFixed(1)}px, ${sc.y.toFixed(1)}px, 0) translate(-50%, -140%)`;
     }
   }
