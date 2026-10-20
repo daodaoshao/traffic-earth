@@ -116,6 +116,8 @@ class SourceRunner {
   conns = new Map<string, ConnState>();
   /** "ip|port" of every connection this source sees; used by linked sources to skip duplicates. */
   localEnds = new Set<string>();
+  /** Router connections a linked mihomo has reported at some point. */
+  claimed = new Set<string>();
   rows: Row[] = [];
   rate = { up: 0, down: 0 };
   hasTotals = false;
@@ -207,7 +209,22 @@ class SourceRunner {
     let sumDown = 0;
     for (const c of s.conns) {
       ends.add(`${normIp(c.device)}|${c.sport}`);
-      if (linked && !c.inbound && (c.proxied || c.device === 'router' || linked.has(`${normIp(c.device)}|${c.sport}`))) continue;
+      if (linked && !c.inbound) {
+        // Until the linked core reports, we can't tell whose a connection is; skip outbound for now.
+        // Once mihomo has claimed a connection it stays claimed, even after mihomo forgets it while
+        // conntrack still lists it — otherwise its whole byte count would be counted a second time.
+        const claimed =
+          !linked.ready ||
+          c.proxied ||
+          c.device === 'router' ||
+          this.claimed.has(c.id) ||
+          linked.ends.has(`${normIp(c.device)}|${c.sport}`);
+        if (claimed) {
+          if (linked.ready) this.claimed.add(c.id);
+          this.conns.delete(c.id);
+          continue;
+        }
+      }
       seen.add(c.id);
       let st = this.conns.get(c.id);
       let du = 0;
@@ -245,6 +262,8 @@ class SourceRunner {
       row.n++;
     }
     this.localEnds = ends;
+    const live = new Set(s.conns.map((c) => c.id));
+    for (const id of this.claimed) if (!live.has(id)) this.claimed.delete(id);
     for (const [id, st] of this.conns) {
       if (!seen.has(id)) {
         this.engine.closed(this.cfg.id, st, now);
@@ -329,13 +348,15 @@ export class Engine {
     return this.runners.get(id)?.adapter.status ?? { state: 'disabled' };
   }
 
-  /** Local endpoints seen by mihomo cores linked to this router, or null when none is linked. */
-  linkedEnds(routerId: string): Set<string> | null {
-    let out: Set<string> | null = null;
+  /** Local endpoints seen by mihomo cores linked to this router (null when none is linked). */
+  linkedEnds(routerId: string): { ready: boolean; ends: Set<string> } | null {
+    let out: { ready: boolean; ends: Set<string> } | null = null;
     for (const r of this.runners.values()) {
       if (r.cfg.type !== 'mihomo' || r.cfg.linkTo !== routerId) continue;
-      out ??= new Set();
-      for (const e of r.localEnds) out.add(e);
+      out ??= { ready: true, ends: new Set() };
+      // A linked core that is down or not yet heard from leaves us unable to dedupe.
+      if (!r.primed || r.adapter.status.state !== 'ok') out.ready = false;
+      for (const e of r.localEnds) out.ends.add(e);
     }
     return out;
   }
