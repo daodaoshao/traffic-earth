@@ -254,6 +254,8 @@ export class OpenWrtAdapter extends EventEmitter implements Adapter {
           up: ob,
           down: rb,
           inbound: false,
+          // Replies come from the router itself, not the destination: a local proxy owns it.
+          proxied: rsrc !== odst && this.routerAddrs.has(rsrc),
         });
       } else {
         // Someone outside opened this. After DNAT the reply comes from the real LAN host.

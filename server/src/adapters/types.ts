@@ -18,6 +18,8 @@ export interface FlowConn {
   down: number;
   start: number;
   inbound: boolean;
+  /** Router data only: the router's own transparent proxy took this connection over (REDIRECT/TPROXY). */
+  proxied?: boolean;
 }
 
 export interface Snapshot {

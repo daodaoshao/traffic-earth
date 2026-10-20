@@ -9,7 +9,7 @@ import { registerApi } from './api.js';
 import { engine } from './engine.js';
 import { initGeo } from './geo.js';
 
-const app = Fastify({ logger: { level: env.logLevel }, trustProxy: true });
+const app = Fastify({ logger: { level: env.logLevel }, disableRequestLogging: true, trustProxy: true });
 
 await app.register(cookie);
 await app.register(websocket);

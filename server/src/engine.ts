@@ -207,7 +207,7 @@ class SourceRunner {
     let sumDown = 0;
     for (const c of s.conns) {
       ends.add(`${normIp(c.device)}|${c.sport}`);
-      if (linked && !c.inbound && (c.device === 'router' || linked.has(`${normIp(c.device)}|${c.sport}`))) continue;
+      if (linked && !c.inbound && (c.proxied || c.device === 'router' || linked.has(`${normIp(c.device)}|${c.sport}`))) continue;
       seen.add(c.id);
       let st = this.conns.get(c.id);
       let du = 0;
