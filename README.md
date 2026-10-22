@@ -2,11 +2,18 @@
 
 在一个缓慢自转的 3D 地球上，实时看家庭或办公局域网的流量正流向世界的哪里。
 
+![流量地球界面截图（演示模式，设备名已匿名）](docs/images/screenshot.jpg)
+
+▶ **宣传片**：[1080p](https://github.com/daodaoshao/traffic-earth/releases/download/v0.1.0/traffic-earth-promo-1080p.mp4) · [4K](https://github.com/daodaoshao/traffic-earth/releases/download/v0.1.0/traffic-earth-promo-4k.mp4)（50 秒，无声）　📐 **[架构设计](docs/architecture.html)**
+
 - **流向**：每个目的地一条飞线，线宽表示实时速率，颜色表示流量类别，外网连进来的流量反向飞回家
 - **分类**：视频、社交、通讯、AI、开发、游戏、下载更新、云与 CDN、智能家居、广告追踪……按域名、ASN、端口自动归类
 - **统计**：实时吞吐、今日累计、目标排行（按域名或地区）、设备排行（点一下只看这台设备）
 - **配置中心**：数据源、家的位置、设备名、显示画质、数据保留时长，全部在网页上设置，修改后立即生效
 - **中文 / English**：界面完整双语，国家名随语言切换，中文城市名内置；语言设置只对当前浏览器生效
+- **地球风格**：点阵、全息线框、真实地球、星点、霓虹板块五种可选
+
+![五种地球风格](docs/images/globe-styles.jpg)
 
 *Watch where your home or office network traffic goes, live, on a 3D globe. Reads the connection table from an OpenWrt router; optionally merges in a mihomo core for host names and proxy exits.*
 
@@ -35,7 +42,7 @@
 
 ```bash
 mkdir traffic-earth && cd traffic-earth
-curl -LO https://raw.githubusercontent.com/traffic-earth/traffic-earth/main/docker-compose.yml
+curl -LO https://raw.githubusercontent.com/daodaoshao/traffic-earth/main/docker-compose.yml
 docker compose up -d
 ```
 
@@ -55,6 +62,7 @@ docker compose up -d
 | `?demo` | 设备名换成「手机 1」「电脑 2」这类通用名，隐藏设置按钮、数据源名、错误提示和鼠标指针 |
 | `&tour` | 自动运镜：全景 → 推近家 → 依次飞到流量最大的几个目的地，手动拖动后暂停 15 秒 |
 | `&city=上海` | 临时把「家」放到内置城市表里的某个城市（中英文名都可以），不改设置 |
+| `&style=hologram` | 临时换一种地球风格：`dots` `hologram` `realistic` `stars` `neon` |
 
 例如：`http://<地址>:8097/?demo&tour&city=Shanghai`。注意域名排行仍会显示真实访问的网站。
 
@@ -108,7 +116,7 @@ web/src/settings.ts    配置中心
 
 - IP 地理位置数据：[DB-IP](https://db-ip.com)（CC BY 4.0）
 - 地球渲染：[globe.gl](https://github.com/vasturiano/globe.gl) / three.js
-- 国界数据：[Natural Earth](https://www.naturalearthdata.com)；夜景贴图：NASA
+- 国界数据：[Natural Earth](https://www.naturalearthdata.com)；地球贴图：NASA（Blue Marble、Black Marble）
 
 ## 许可证
 

@@ -1,7 +1,7 @@
 services:
   traffic-earth:
     # Prebuilt multi-arch image (amd64 / arm64). Or comment this out and use `build: .`
-    image: ghcr.io/traffic-earth/traffic-earth:latest
+    image: ghcr.io/daodaoshao/traffic-earth:latest
     # build: .
     container_name: traffic-earth
     restart: unless-stopped
